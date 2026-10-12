@@ -36,7 +36,8 @@ jobs:
           set -euo pipefail
           python3 -m json.tool apps-script/.clasp.json >/dev/null
           python3 -m json.tool apps-script/appsscript.json >/dev/null
-          test "$(find apps-script -maxdepth 1 -name '*.js' | wc -l)" -ge 9
+          test -f apps-script/Vorschaubilder.js
+          test "$(find apps-script -maxdepth 1 -name '*.js' | wc -l)" -ge 10
           for file in apps-script/*.js; do node --check "$file"; done
           node -e "const c=require('./apps-script/.clasp.json'); if(c.scriptId!=='14WM3bv3Ubr-ZI9K-qRfcNo3tj9TkZM14EQQJqlAxinrt2w9IaONBYyij') process.exit(1)"
 
