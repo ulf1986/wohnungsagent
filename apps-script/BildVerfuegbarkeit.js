@@ -7,7 +7,7 @@
 function checkListingImageAvailabilityInternal() {
   const ss = SpreadsheetApp.openById(CONFIG.spreadsheetId);
   const sheet = ss.getSheetByName(CONFIG.sheetName);
-  const settings = ss.getSheetByName('Einstellungen');
+  const settings = ss.getSheetByName('Sperrliste');
   if (!sheet || !settings) throw new Error('Anzeigen/Einstellungen fehlen');
   const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
   const c = name => {
@@ -20,7 +20,7 @@ function checkListingImageAvailabilityInternal() {
   const rowCount=sheet.getLastRow()-1;
   if (rowCount<1) return;
   const data=sheet.getRange(2,1,rowCount,headers.length).getValues();
-  const blacklist=settings.getRange(1,4,Math.max(1,settings.getLastRow()),3).getValues();
+  const blacklist=settings.getRange(1,1,Math.max(1,settings.getLastRow()),3).getValues();
   const blocked=new Set(blacklist.slice(1).map(x=>String(x[0]||'').trim()));
   const deletion=[];
   let checked=0, unavailable=0, uncertain=0;
@@ -70,9 +70,9 @@ function checkListingImageAvailabilityInternal() {
   // Liste vor jeder Löschung dauerhaft ergänzen und durch Kontrolllesen bestätigen.
   for(const item of deletion){
     const next=settings.getLastRow()+1;
-    settings.getRange(next,4,1,3).setValues([[item.id,item.url,item.reason]]);
+    settings.getRange(next,1,1,3).setValues([[item.id,item.url,item.reason]]);
     SpreadsheetApp.flush();
-    const saved=settings.getRange(next,4,1,3).getValues()[0];
+    const saved=settings.getRange(next,1,1,3).getValues()[0];
     if(saved[0]!==item.id||saved[1]!==item.url)
       throw new Error('Sperrliste nicht bestätigt: '+item.id);
   }
