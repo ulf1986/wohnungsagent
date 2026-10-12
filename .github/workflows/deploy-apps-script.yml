@@ -1,0 +1,55 @@
+name: Apps Script – manueller Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Zum Deploy DEPLOY eingeben (überschreibt den Online-Skriptcode)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apps-script-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ inputs.confirmation == 'DEPLOY' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository laden
+        uses: actions/checkout@v4
+
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: clasp installieren
+        run: npm install -g @google/clasp@3.4.1
+
+      - name: Quellcode überprüfen
+        run: |
+          set -euo pipefail
+          python3 -m json.tool apps-script/.clasp.json >/dev/null
+          python3 -m json.tool apps-script/appsscript.json >/dev/null
+          test "$(find apps-script -maxdepth 1 -name '*.js' | wc -l)" -ge 9
+          for file in apps-script/*.js; do node --check "$file"; done
+          node -e "const c=require('./apps-script/.clasp.json'); if(c.scriptId!=='14WM3bv3Ubr-ZI9K-qRfcNo3tj9TkZM14EQQJqlAxinrt2w9IaONBYyij') process.exit(1)"
+
+      - name: Google-Anmeldung einrichten
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$CLASPRC_JSON"
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          python3 -m json.tool "$HOME/.clasprc.json" > /dev/null
+
+      - name: Apps Script aus GitHub bereitstellen
+        working-directory: apps-script
+        run: clasp push
