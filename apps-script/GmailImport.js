@@ -365,10 +365,6 @@ function runGmailImagePipeline() {
 
     console.log('Gmail: ' + JSON.stringify(stats));
 
-    // Bereits bekannte Anzeigen nachpflegen.
-    // Auch wenn keine neue Mail vorhanden ist.
-    const imageStats = processExistingListingImages();
-
 // 1. Bestehende Anzeigen und Galerien aktualisieren.
 try {
   const imageStats = processExistingListingImages();
