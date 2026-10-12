@@ -380,7 +380,15 @@ try {
       );
     }
 
-    // 2. Anschließend drei Vorschaubilder pro Anzeige
+    // Original-Bildquellen auch bei bereits importierten Anzeigen prüfen.
+    // Nur wiederholt bestätigte HTTP 404/410 führen zur Sperrung.
+    try {
+      checkListingImageAvailabilityInternal();
+    } catch (error) {
+      console.error('Fehler bei der Bild-Verfügbarkeitsprüfung: ' + error.message);
+    }
+
+    // 3. Ein Zellvorschaubild pro Anzeige und KI-Status aktualisieren.
     // und die sichtbaren KI-Statuswerte aktualisieren.
     try {
       updateListingPreviewsInternal();
