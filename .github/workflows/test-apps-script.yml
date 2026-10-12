@@ -1,0 +1,39 @@
+
+name: Apps Script Verbindung testen
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository laden
+        uses: actions/checkout@v4
+
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: clasp installieren
+        run: npm install -g @google/clasp@3.4.1
+
+      - name: Google-Anmeldung einrichten
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          test -n "$CLASPRC_JSON"
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+
+      - name: Apps Script nur lesend abrufen
+        working-directory: apps-script
+        run: |
+          clasp pull
+          clasp status
+          echo "Apps Script erfolgreich gelesen."
