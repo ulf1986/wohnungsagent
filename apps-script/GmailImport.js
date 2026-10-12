@@ -75,6 +75,8 @@ function runGmailImagePipeline() {
       );
     }
 
+    const blockedIds = readMailImageBlacklist(ss);
+
     const existing = readMailQueueIndex(queue);
     const processed = readPreviouslyProcessedMailIds(
       queue
@@ -110,7 +112,8 @@ function runGmailImagePipeline() {
           queued &&
           (queued.status === 'completed' ||
            queued.status === 'no_images' ||
-           queued.status === 'gallery_unavailable')
+           queued.status === 'gallery_unavailable' ||
+           queued.status === 'blocked')
         ) {
           continue;
         }
@@ -143,7 +146,8 @@ function runGmailImagePipeline() {
       no_images: 0,
       retry: 0,
       uploaded: 0,
-      gallery_unavailable: 0
+      gallery_unavailable: 0,
+      blocked: 0
     };
 
     for (const mail of selected) {
@@ -167,6 +171,23 @@ function runGmailImagePipeline() {
         const links = extractPropertyLinks(
           html, plain
         );
+
+        // Vor JEGLICHEM Download Anzeigen-IDs aus den Links bestimmen.
+        const propertyIds = [...new Set(links.map(getMailListingId).filter(Boolean))];
+        const blockedInMail = propertyIds.filter(id => blockedIds.has(id));
+        if (blockedInMail.length) {
+          const allBlocked = blockedInMail.length === propertyIds.length;
+          // Bei mehreren Immobilien in einer Mail sind die HTML-Bilder
+          // keiner einzelnen ID verlässlich zugeordnet. Sicher überspringen.
+          setMailQueueStatus(queue, row,
+            allBlocked ? 'blocked' : 'retry',
+            (allBlocked ? 'Sperrliste: ' : 'Gemischte Mail, keine sichere Bildzuordnung: ') +
+              blockedInMail.join(', '), allBlocked ? new Date().toISOString() : '');
+          stats.blocked++;
+          console.log(mailId + ': Bilddownload unterbunden wegen Sperrliste ' +
+            blockedInMail.join(', '));
+          continue;
+        }
 
         const mailImageUrls =
           extractPropertyImageUrls(html);
@@ -713,4 +734,31 @@ function cleanMailUrl(value) {
     .replace(/&quot;/gi, '"')
     .replace(/&gt;/gi, '>')
     .replace(/&lt;/gi, '<');
+}
+
+
+/** Sperrliste!A:C: keine neuen Downloads für gesperrte Inserate. */
+function readMailImageBlacklist(ss) {
+  const sheet = ss.getSheetByName('Sperrliste');
+  if (!sheet) throw new Error('Pflichtblatt Sperrliste fehlt – kein Bilddownload');
+  const last = sheet.getLastRow();
+  if (last < 2) return new Set();
+  return new Set(sheet.getRange(2, 1, last - 1, 1).getValues()
+    .map(row => String(row[0] || '').trim().toLowerCase()).filter(Boolean));
+}
+
+/** Portal und Datensatz-ID nur aus eindeutig erkennbaren Anzeigenlinks. */
+function getMailListingId(url) {
+  const value = String(url || '');
+  const rules = [
+    ['idealista', /(?:^|\.)idealista\.com\/inmueble\/(\d+)/i],
+    ['fotocasa', /(?:^|\.)fotocasa\.es\/es\/alquiler\/vivienda\/[^?#]*?\/(\d+)\/d(?:[?#]|$)/i],
+    ['yaencontre', /(?:^|\.)yaencontre\.com\/alquiler\/[^?#]*?-(\d+)(?:[?#]|$)/i],
+    ['pisos', /(?:^|\.)pisos\.com\/comprar\/[^?#]*?-(\d+)(?:[?#]|$)/i]
+  ];
+  for (const [portal, pattern] of rules) {
+    const match = value.match(pattern);
+    if (match) return portal + ':' + match[1];
+  }
+  return '';
 }
