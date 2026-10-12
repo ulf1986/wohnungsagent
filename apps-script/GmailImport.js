@@ -111,8 +111,7 @@ function runGmailImagePipeline() {
         if (
           queued &&
           (queued.status === 'completed' ||
-           queued.status === 'no_images' ||
-           queued.status === 'gallery_unavailable' ||
+           queued.status === 'ready_for_ai' ||
            queued.status === 'blocked')
         ) {
           continue;
@@ -332,10 +331,15 @@ function runGmailImagePipeline() {
           status = 'completed';
         }
 
-        const ready =
-          status === 'completed' ||
-          status === 'no_images' ||
-          status === 'gallery_unavailable';
+        // Nur eine eindeutig zugeordnete Immobilie mit Drive-Bildern
+        // darf in die KI-Queue. Bildlose Angebote bleiben im Retry.
+        const oneListing = propertyIds.length === 1;
+        const ready = status === 'completed' && oneListing &&
+          allFiles.some(file => file.file_id && file.source_url);
+        if (ready) status = 'ready_for_ai';
+        else if (status === 'completed') status = 'retry';
+        else if (status === 'no_images' || status === 'gallery_unavailable')
+          status = 'retry';
 
         setMailQueueStatus(
           queue,
@@ -351,7 +355,7 @@ function runGmailImagePipeline() {
         stats.processed++;
         stats.uploaded += uploaded;
 
-        if (status === 'completed') {
+        if (status === 'ready_for_ai') {
           stats.completed++;
         } else if (status === 'no_images') {
           stats.no_images++;
