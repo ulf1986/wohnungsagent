@@ -193,7 +193,7 @@ function runGmailImagePipeline() {
 
         const oldFiles = parseMailQueueFiles(
           queue.getRange(row, 14).getValue()
-        );
+        ).filter(file => isPropertyImageUrl(file.source_url));
 
         const allFiles = [...oldFiles];
         const fileIds = new Set(
@@ -697,6 +697,19 @@ function extractIdealistaListingId(url) {
 /**
  * Bild-URLs aus dem E-Mail-HTML.
  */
+function isPropertyImageUrl(url) {
+  const match = String(url || '').match(/^https:\/\/([^\/?#]+)(\/[^?#]*)/i);
+  if (!match) return false;
+  const host = match[1].toLowerCase(), path = match[2].toLowerCase();
+  return (host === 'media.yaencontre.com' &&
+    path.startsWith('/img/photo/') && /\.(jpg|jpeg|png|webp)$/.test(path)) ||
+    (host === 'static.fotocasa.es' &&
+      (/^\/images\/ads\//.test(path) || /^\/images\/anuncio\//.test(path))) ||
+    (/(^|\.)img\d*\.idealista\.com$/.test(host)) ||
+    ((host === 'pisos.com' || host.endsWith('.pisos.com')) &&
+      /\.(jpg|jpeg|png|webp)$/.test(path));
+}
+
 function extractPropertyImageUrls(html) {
   const candidates = extractHtmlImageUrls(html);
   // Fotocasa sometimes uses picture/source attributes outside img tags.
@@ -728,10 +741,8 @@ function extractPropertyImageUrls(html) {
         .test(host);
 
     const yaencontre =
-      (
-        host === 'yaencontre.com' ||
-        host.endsWith('.yaencontre.com')
-      ) &&
+      host === 'media.yaencontre.com' &&
+      path.startsWith('/img/photo/') &&
       /\.(jpg|jpeg|png|webp)$/.test(path);
 
     const pisos =
@@ -742,8 +753,8 @@ function extractPropertyImageUrls(html) {
       /\.(jpg|jpeg|png|webp)$/.test(path);
 
     if (
-      fotocasa || idealista ||
-      yaencontre || pisos
+      (fotocasa || idealista || yaencontre || pisos) &&
+      isPropertyImageUrl(url)
     ) {
       result.add(url);
     }
