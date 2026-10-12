@@ -148,11 +148,7 @@ function selectListingPreviewFiles(files, limit) {
   const seen = new Set(), selected = [];
   for (const file of files) {
     if (!file || !file.file_id) continue;
-    const source = String(file.source_url || '');
-    const match = source.match(
-      /\\/id\\.pro\\.es\\.image\\.master\\/(?:[a-f0-9]{2}\\/){3}(\\d+)\\./i);
-    const identity = match ? 'idealista:' + match[1]
-      : 'drive:' + String(file.file_id);
+    const identity = 'drive:' + String(file.file_id);
     if (seen.has(identity)) continue;
     seen.add(identity);
     selected.push(file);
