@@ -699,6 +699,9 @@ function extractIdealistaListingId(url) {
  */
 function extractPropertyImageUrls(html) {
   const candidates = extractHtmlImageUrls(html);
+  // Fotocasa sometimes uses picture/source attributes outside img tags.
+  const more = String(html || '').match(/https:\/\/static\.fotocasa\.es\/images\/ads\/[^\s"'<>]+/gi) || [];
+  candidates.push(...more);
   const result = new Set();
 
   for (const raw of candidates) {
