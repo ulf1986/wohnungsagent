@@ -427,9 +427,29 @@ try {
         error.message
       );
     }
+    // Anzeigen immer nach ursprünglichem E-Mail-Eingang sortieren.
+    try {
+      sortListingsByMailReceived(ss);
+    } catch (error) {
+      console.error('Sortierung nach E-Mail-Eingang: ' + error.message);
+    }
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Sortiert ganze Datenzeilen, einschließlich Zellbilder und Checkboxen.
+ * Eingang (UTC) enthält ISO-8601-Strings, die chronologisch sortierbar sind.
+ */
+function sortListingsByMailReceived(ss) {
+  const sheet = ss.getSheetByName(CONFIG.sheetName);
+  if (!sheet || sheet.getLastRow() < 3) return;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const receivedIndex = headers.indexOf('Eingang (UTC)');
+  if (receivedIndex < 0) throw new Error('Spalte Eingang (UTC) fehlt');
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn())
+    .sort([{column: receivedIndex + 1, ascending: false}]);
 }
 
 /**
