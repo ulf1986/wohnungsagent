@@ -1,24 +1,19 @@
 /**
- * Vorschaubilder.gs – bis zu drei private Drive-Fotos je Anzeige.
- * Keine Freigabe oder Veröffentlichung von Drive-Dateien.
- * Läuft innerhalb des Locks der Gmail-Pipeline; separat auch manuell.
+ * Ein echtes Zellbild pro Anzeige (Spalte "Vorschaubild").
+ * Private Drive-Bilder werden per data:-URL eingebettet; keine Freigabe.
+ * Bei jedem Durchlauf alle vorhandenen Anzeigen mit Datensatz-ID abgleichen.
+ * Erst nach erfolgreichem Schreiben werden alte schwebende Bilder entfernt.
  */
 const PREVIEW_CONFIG = {
-  maxImages: 3,
-  imageWidth: 68,
-  imageHeight: 68,
-  spacing: 7,
-  offsetX: 6,
-  offsetY: 10,
-  columnWidth: 236,
-  rowHeight: 88,
-  marker: 'WOHNUNGSAGENT_PREVIEW'
+  marker: 'WOHNUNGSAGENT_PREVIEW',
+  columnWidth: 120,
+  rowHeight: 92
 };
 
 function updateListingPreviews() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) {
-    console.log('Vorschaubilder: Skript ist bereits beschäftigt.');
+    console.log('Vorschaubilder: Skript bereits beschäftigt.');
     return;
   }
   try {
@@ -32,12 +27,10 @@ function updateListingPreviewsInternal() {
   const sheet = SpreadsheetApp.openById(CONFIG.spreadsheetId)
     .getSheetByName(CONFIG.sheetName);
   if (!sheet) throw new Error('Anzeigen-Tabelle nicht gefunden.');
-
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
 
-  const lastColumn = sheet.getLastColumn();
-  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const column = name => {
     const index = headers.indexOf(name);
     if (index < 0) throw new Error('Spalte fehlt: ' + name);
@@ -48,112 +41,96 @@ function updateListingPreviewsInternal() {
   const previewCol = column('Vorschaubild');
   const aiCol = column('KI-Bewertung');
   const deleteCol = column('Zu löschen');
+  const rows = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  const valid = new Set();
+  const migrated = new Set();
+  let inserted = 0, retained = 0, skipped = 0;
 
-  const rows = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
-  const statuses = [];
-  const desired = [];
+  // Kein Bulk-Schreiben auf leere Platzhalterzeilen.
   for (let i = 0; i < rows.length; i++) {
+    const rowNumber = i + 2;
     const row = rows[i];
     const listingId = String(row[idCol - 1] || '').trim();
-    if (!listingId) {
-      statuses.push(['']);
-      continue;
-    }
+    if (!listingId) continue;
+    valid.add(rowNumber);
+
     let data;
     try {
-      const raw = row[jsonCol - 1];
-      data = raw ? JSON.parse(String(raw)) : {};
-      if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        throw new Error('JSON muss ein Objekt enthalten');
-      }
+      data = JSON.parse(String(row[jsonCol - 1] || '{}'));
+      if (!data || typeof data !== 'object' || Array.isArray(data))
+        throw new Error('Bildanalyse JSON ist kein Objekt');
     } catch (error) {
-      statuses.push(['JSON-Fehler']);
-      console.warn('Vorschaubilder: Ungültiges JSON in Zeile ' + (i + 2));
+      sheet.getRange(rowNumber, aiCol).setValue('JSON-Fehler');
+      console.warn('Vorschaubilder: Zeile ' + rowNumber + ': ' + error.message);
+      skipped++;
       continue;
     }
-    statuses.push([determineAiPreviewStatus(data)]);
+    sheet.getRange(rowNumber, aiCol).setValue(determineAiPreviewStatus(data));
     if (row[deleteCol - 1] === true) continue;
-    const files = selectListingPreviewFiles(data.drive_files, PREVIEW_CONFIG.maxImages);
-    for (let slot = 0; slot < files.length; slot++) {
-      const file = files[slot];
-      desired.push({
-        listingId,
-        rowNumber: i + 2,
-        slot,
-        file,
-        marker: makePreviewMarker(listingId, slot, file.file_id)
-      });
+
+    const file = selectListingPreviewFiles(data.drive_files, 1)[0];
+    if (!file) continue;
+    const marker = [PREVIEW_CONFIG.marker, listingId, file.file_id].join('|');
+    const cell = sheet.getRange(rowNumber, previewCol);
+    const value = cell.getValue();
+
+    if (value && value.valueType === SpreadsheetApp.ValueType.IMAGE &&
+        value.getAltTextTitle() === marker) {
+      retained++;
+      migrated.add(rowNumber);
+      continue;
     }
-  }
 
-  sheet.setColumnWidth(previewCol, PREVIEW_CONFIG.columnWidth);
-  sheet.getRange(2, aiCol, statuses.length, 1).setValues(statuses);
-  sheet.getRange(2, aiCol, statuses.length, 1)
-    .setHorizontalAlignment('center');
-
-  const wantedByMarker = new Map(desired.map(item => [item.marker, item]));
-  const retained = new Set();
-  for (const image of sheet.getImages()) {
-    const marker = String(image.getAltTextTitle() || '');
-    if (!marker.startsWith(PREVIEW_CONFIG.marker + '|')) continue;
-    const want = wantedByMarker.get(marker);
-    const anchor = image.getAnchorCell();
-    if (want && !retained.has(marker) &&
-        anchor.getRow() === want.rowNumber &&
-        anchor.getColumn() === previewCol) {
-      retained.add(marker);
-      positionPreviewImage(image, want.slot);
-    } else {
-      image.remove(); // ausschließlich eigene markierte Vorschaubilder
-    }
-  }
-
-  let inserted = 0;
-  let skipped = 0;
-  for (const item of desired) {
-    if (retained.has(item.marker)) continue;
     try {
-      const file = DriveApp.getFileById(item.file.file_id);
-      if (file.isTrashed()) throw new Error('Drive-Datei im Papierkorb');
-      const blob = file.getBlob();
+      const driveFile = DriveApp.getFileById(file.file_id);
+      if (driveFile.isTrashed()) throw new Error('Datei im Papierkorb');
+      const blob = driveFile.getBlob();
       const mime = String(blob.getContentType()).split(';')[0].toLowerCase();
-      if (!['image/jpeg', 'image/png', 'image/gif'].includes(mime)) {
-        throw new Error('Nicht unterstütztes Format: ' + mime);
-      }
-      const x = PREVIEW_CONFIG.offsetX + item.slot *
-        (PREVIEW_CONFIG.imageWidth + PREVIEW_CONFIG.spacing);
-      const image = sheet.insertImage(blob, previewCol, item.rowNumber,
-        x, PREVIEW_CONFIG.offsetY);
-      positionPreviewImage(image, item.slot);
-      image.setAltTextTitle(item.marker);
-      image.setAltTextDescription(
-        'Wohnungsagent ' + item.listingId + ', Foto ' + (item.slot + 1));
+      if (!['image/jpeg', 'image/png', 'image/gif'].includes(mime))
+        throw new Error('Bildformat nicht unterstützt: ' + mime);
+
+      // SetSourceUrl akzeptiert auch Base64-data-URLs. Der Google-Drive-
+      // Datei-Zugriff bleibt privat, ohne Freigabe oder öffentliche URL.
+      const dataUrl = 'data:' + mime + ';base64,' +
+        Utilities.base64Encode(blob.getBytes());
+      const image = SpreadsheetApp.newCellImage()
+        .setSourceUrl(dataUrl)
+        .setAltTextTitle(marker)
+        .setAltTextDescription('Wohnungsagent ' + listingId)
+        .build();
+      cell.setValue(image);
+      SpreadsheetApp.flush();
+      const confirmed = cell.getValue();
+      if (!confirmed || confirmed.valueType !== SpreadsheetApp.ValueType.IMAGE)
+        throw new Error('Zellbild nach Schreiben nicht nachweisbar');
+      migrated.add(rowNumber);
       inserted++;
     } catch (error) {
       skipped++;
-      console.warn('Vorschaubild ' + item.listingId +
-        ' / ' + (item.slot + 1) + ': ' + error.message);
+      console.warn('Zellbild ' + listingId + ': ' + error.message);
     }
   }
 
-  sheet.setRowHeights(2, rows.length, PREVIEW_CONFIG.rowHeight);
-  SpreadsheetApp.flush();
-  console.log('Vorschaubilder: ' + JSON.stringify({
-    listings: rows.length,
-    requestedImages: desired.length,
-    retained: retained.size,
-    inserted,
-    skipped,
-    statusesUpdated: statuses.length
-  }));
-}
+  // Alte schwebende Bilder NUR in der Vorschau-Spalte und erst dann
+  // entfernen, wenn das zugehörige echte Zellbild geprüft wurde.
+  let removed = 0;
+  for (const image of sheet.getImages()) {
+    const anchor = image.getAnchorCell();
+    if (anchor.getColumn() !== previewCol) continue;
+    if (!migrated.has(anchor.getRow())) continue;
+    image.remove();
+    removed++;
+  }
 
-function positionPreviewImage(image, slot) {
-  image.setWidth(PREVIEW_CONFIG.imageWidth);
-  image.setHeight(PREVIEW_CONFIG.imageHeight);
-  image.setAnchorCellXOffset(PREVIEW_CONFIG.offsetX + slot *
-    (PREVIEW_CONFIG.imageWidth + PREVIEW_CONFIG.spacing));
-  image.setAnchorCellYOffset(PREVIEW_CONFIG.offsetY);
+  sheet.setColumnWidth(previewCol, PREVIEW_CONFIG.columnWidth);
+  for (const rowNumber of valid) {
+    sheet.setRowHeight(rowNumber, PREVIEW_CONFIG.rowHeight);
+  }
+  SpreadsheetApp.flush();
+  console.log('Zellvorschaubilder: ' + JSON.stringify({
+    listings: valid.size, inserted, retained, skipped,
+    removedFloating: removed
+  }));
 }
 
 function determineAiPreviewStatus(data) {
@@ -168,13 +145,12 @@ function determineAiPreviewStatus(data) {
 
 function selectListingPreviewFiles(files, limit) {
   if (!Array.isArray(files)) return [];
-  const selected = [];
-  const seen = new Set();
+  const seen = new Set(), selected = [];
   for (const file of files) {
     if (!file || !file.file_id) continue;
     const source = String(file.source_url || '');
     const match = source.match(
-      /\/id\.pro\.es\.image\.master\/(?:[a-f0-9]{2}\/){3}(\d+)\./i);
+      /\\/id\\.pro\\.es\\.image\\.master\\/(?:[a-f0-9]{2}\\/){3}(\\d+)\\./i);
     const identity = match ? 'idealista:' + match[1]
       : 'drive:' + String(file.file_id);
     if (seen.has(identity)) continue;
@@ -183,8 +159,4 @@ function selectListingPreviewFiles(files, limit) {
     if (selected.length >= limit) break;
   }
   return selected;
-}
-
-function makePreviewMarker(listingId, slot, fileId) {
-  return [PREVIEW_CONFIG.marker, listingId, slot, fileId].join('|');
 }
