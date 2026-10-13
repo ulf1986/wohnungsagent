@@ -15,15 +15,6 @@ function getPisosListing(url) {
   };
 }
 
-/** Tag-Attribute: beide Anführungszeichen und unquoted HTML unterstützen. */
-function getPisosHtmlAttribute(tag, name) {
-  const pattern = new RegExp(
-    '\\s' + name + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s>]+))', 'i'
-  );
-  const match = String(tag).match(pattern);
-  return match ? cleanMailUrl(match[1] || match[2] || match[3] || '') : '';
-}
-
 /** Nur echte Fotoquellen, keine Logos, Pfeile oder Tracking-Pixel. */
 function isPisosPropertyImageUrl(url) {
   const value = cleanMailUrl(url);
@@ -56,12 +47,12 @@ function extractPisosMailImages(html) {
   const seen = new Set();
   for (const anchor of String(html || '').matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
     const listing = getPisosListing(
-      getPisosHtmlAttribute('<a ' + anchor[1] + '>', 'href')
+      getMailHtmlAttribute('<a ' + anchor[1] + '>', 'href')
     );
     if (!listing) continue;
     for (const tag of anchor[2].match(/<img\b[^>]*>/gi) || []) {
       for (const attr of ['src', 'data-src', 'srcset', 'data-srcset']) {
-        const value = getPisosHtmlAttribute(tag, attr);
+        const value = getMailHtmlAttribute(tag, attr);
         const candidates = /srcset$/.test(attr) ? value.split(',') : [value];
         for (const candidate of candidates) {
           const url = candidate.trim().split(/\s+/)[0];

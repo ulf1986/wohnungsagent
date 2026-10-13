@@ -190,13 +190,17 @@ function runGmailImagePipeline() {
 
         const mailImageUrls =
           extractPropertyImageUrls(html);
-        const pisosImages = extractPisosMailImages(html);
+        const linkedImages = [
+          ...extractPisosMailImages(html),
+          ...extractImmoScoutMailImages(html)
+        ];
 
         const oldFiles = parseMailQueueFiles(
           queue.getRange(row, 14).getValue()
         ).filter(file => isPropertyImageUrl(file.source_url) &&
-          (!isPisosPropertyImageUrl(file.source_url) ||
-            pisosImages.some(image => image.source_url === file.source_url)));
+          (!(isPisosPropertyImageUrl(file.source_url) ||
+              isImmoScoutPropertyImageUrl(file.source_url)) ||
+            linkedImages.some(image => image.source_url === file.source_url)));
 
         const allFiles = [...oldFiles];
         const fileIds = new Set(
@@ -299,20 +303,21 @@ function runGmailImagePipeline() {
           }
         }
 
-        // Pisos-Fotos nur freigeben, wenn ihr Link eine eindeutige ID liefert.
+        // Verlinkte Fotos nur freigeben, wenn ihr Link eine eindeutige ID liefert.
         for (const file of allFiles) {
-          if (!isPisosPropertyImageUrl(file.source_url)) continue;
-          const owners = [...new Set(pisosImages
+          if (!isPisosPropertyImageUrl(file.source_url) &&
+              !isImmoScoutPropertyImageUrl(file.source_url)) continue;
+          const owners = [...new Set(linkedImages
             .filter(image => image.source_url === file.source_url)
             .map(image => image.listing_id))];
           delete file.listing_id;
           delete file.listing_url;
           if (owners.length === 1) {
             file.listing_id = owners[0];
-            file.listing_url = pisosImages.find(image =>
+            file.listing_url = linkedImages.find(image =>
               image.source_url === file.source_url).listing_url;
           } else {
-            errors.push('Pisos-Bild ohne eindeutige Inseratszuordnung');
+            errors.push('Bild ohne eindeutige Inseratszuordnung');
           }
         }
 
@@ -684,13 +689,22 @@ function extractPropertyLinks(html, plain) {
       'fotocasa.es',
       'idealista.com',
       'yaencontre.com',
-      'pisos.com'
+      'pisos.com',
+      'immobilienscout24.de',
+      'push.search.is24.de'
     ].some(domain =>
       host === domain ||
       host.endsWith('.' + domain)
     );
 
     if (!allowed) continue;
+
+    if (host === 'immobilienscout24.de' || host.endsWith('.immobilienscout24.de') ||
+        host === 'push.search.is24.de') {
+      const listing = getImmoScoutListing(url);
+      if (listing) result.add(listing.url);
+      continue;
+    }
 
     if (host === 'pisos.com' || host.endsWith('.pisos.com')) {
       const listing = getPisosListing(url);
@@ -726,7 +740,7 @@ function extractIdealistaListingId(url) {
  * Bild-URLs aus dem E-Mail-HTML.
  */
 function isPropertyImageUrl(url) {
-  if (isPisosPropertyImageUrl(url)) return true;
+  if (isPisosPropertyImageUrl(url) || isImmoScoutPropertyImageUrl(url)) return true;
   const match = String(url || '').match(/^https:\/\/([^\/?#]+)(\/[^?#]*)/i);
   if (!match) return false;
   const host = match[1].toLowerCase(), path = match[2].toLowerCase();
@@ -780,11 +794,22 @@ function extractPropertyImageUrls(html) {
     }
   }
 
-  // Pisos-Fotos benötigen den Inseratslink im umschließenden Bildblock.
-  for (const image of extractPisosMailImages(html)) {
+  // Fotos dieser Portale benötigen den Inseratslink im umschließenden Bildblock.
+  for (const image of [
+    ...extractPisosMailImages(html), ...extractImmoScoutMailImages(html)
+  ]) {
     result.add(image.source_url);
   }
   return [...result];
+}
+
+/** Tag-Attribute: beide Anführungszeichen und unquoted HTML unterstützen. */
+function getMailHtmlAttribute(tag, name) {
+  const pattern = new RegExp(
+    '\\s' + name + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s>]+))', 'i'
+  );
+  const match = String(tag).match(pattern);
+  return match ? cleanMailUrl(match[1] || match[2] || match[3] || '') : '';
 }
 
 function cleanMailUrl(value) {
@@ -811,6 +836,8 @@ function readMailImageBlacklist(ss) {
 
 /** Portal und Datensatz-ID nur aus eindeutig erkennbaren Anzeigenlinks. */
 function getMailListingId(url) {
+  const immoscout = getImmoScoutListing(url);
+  if (immoscout) return immoscout.listing_id;
   const pisos = getPisosListing(url);
   if (pisos) return pisos.listing_id;
   const value = String(url || '');

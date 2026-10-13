@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const root = path.join(__dirname, '..');
 function context() {
   const ctx = vm.createContext({ console: { log() {}, warn() {}, error() {} } });
-  for (const name of ['Drive', 'Pisos', 'GmailImport']) {
+  for (const name of ['Drive', 'Pisos', 'ImmoScout', 'GmailImport']) {
     vm.runInContext(fs.readFileSync(path.join(root, 'apps-script', name + '.js'), 'utf8'), ctx);
   }
   return ctx;
@@ -215,4 +215,146 @@ test('other portals retain image extraction and stable listing IDs', () => {
   assert.equal(ctx.getMailListingId('https://www.idealista.com/inmueble/123/'), 'idealista:123');
   assert.equal(ctx.getMailListingId('https://www.fotocasa.es/es/alquiler/vivienda/malaga/foo/123/d'), 'fotocasa:123');
   assert.equal(ctx.getMailListingId('https://www.yaencontre.com/alquiler/piso/inmueble-456-123'), 'yaencontre:123');
+});
+
+const scoutInstant = '1a1344e0f79ea479';
+const scoutWelcome = '1a12727237a1b36c';
+const scoutIds = [
+  '171420671', '171446909', '170965656', '170964461', '170953342',
+  '171065000', '170784443', '171342349', '170437956', '170127129'
+];
+const scoutPhotoIds = [
+  '171446909', '170965656', '170964461', '171065000',
+  '170784443', '171342349', '170437956', '170127129'
+];
+const scoutPhotoNames = [
+  '149b7352-ff82-4cb1-96d2-44393ea30ab1-2105419490.jpg',
+  'a8508f93-4f8b-492d-9150-972edd06cdd4-2095150024.jpg',
+  '976c6283-e2a7-47a2-8325-e39f40e0acb3-2095126092.jpg',
+  '57bc31a8-cc12-42d0-bf5b-33bb6d99e0e4-2097252960.jpg',
+  '3b30f2a9-5cd5-4cec-96de-b1ebb9bc2d0b-2091511708.jpg',
+  '7716a705-f548-4009-8a7f-4433ed99735f-2103126986.jpg',
+  'b27ae5aa-f0cc-4a28-a6b9-4443a91d6cc2-2084084195.jpg',
+  '8e6a4030-6374-43b6-8267-cf30ba27d8f1-2077304076.jpg'
+];
+
+test('ImmoScout original instant layout: canonical expose and one correctly assigned photo', () => {
+  const ctx = context(), html = fixture(scoutInstant);
+  const links = plain(ctx.extractPropertyLinks(html, ''));
+  assert.deepEqual(links, ['https://www.immobilienscout24.de/expose/171726535']);
+  const photos = plain(ctx.extractImmoScoutMailImages(html));
+  assert.equal(photos.length, 1);
+  assert.equal(photos[0].listing_id, 'immoscout:171726535');
+  assert.equal(photos[0].listing_url, links[0]);
+  assert.equal(photos[0].source_url,
+    'https://pictures.immobilienscout24.de/listings/bfea1817-e6e8-41c8-935e-64e5d7d3d809-2111296186.jpg/ORIG/legacy_thumbnail/640x481/format/jpg/quality/50');
+  assert.deepEqual(plain(ctx.extractPropertyImageUrls(html)), photos.map(p => p.source_url));
+  assert.deepEqual(plain(ctx.extractImmoScoutImages({ html })), photos.map(p => p.source_url));
+});
+
+test('ImmoScout welcome layout: ten listings, eight paired photos and two ignored placeholders', () => {
+  const ctx = context(), html = fixture(scoutWelcome);
+  assert.deepEqual(plain(ctx.extractPropertyLinks(html, '')).map(ctx.getMailListingId),
+    scoutIds.map(id => 'immoscout:' + id));
+  const photos = plain(ctx.extractImmoScoutMailImages(html));
+  assert.deepEqual(photos.map(p => p.listing_id), scoutPhotoIds.map(id => 'immoscout:' + id));
+  photos.forEach((photo, i) => {
+    assert.equal(new URL(photo.source_url).pathname.split('/')[2], scoutPhotoNames[i]);
+    assert.equal(ctx.getMailListingId(photo.listing_url), photo.listing_id);
+  });
+  assert.deepEqual(plain(ctx.extractPropertyImageUrls(html)), photos.map(p => p.source_url));
+});
+
+test('ImmoScout tracked, direct and plain-text links deduplicate without personal parameters', () => {
+  const ctx = context(), direct = 'https://www.immobilienscout24.de/expose/171726535';
+  const tracked = 'https://push.search.is24.de/email/expose/171726535?PID=private&amp;savedSearchId=private';
+  const html = '<a href="' + tracked + '">image</a>' +
+    "<a href='" + direct + "/?utm_source=email#title'>title</a>" +
+    '<a href=' + direct + '>button</a>';
+  assert.deepEqual(plain(ctx.extractPropertyLinks(html, tracked.replace('&amp;', '&'))), [direct]);
+  assert.equal(ctx.getMailListingId(tracked), 'immoscout:171726535');
+  assert.equal(ctx.getMailListingId(direct), 'immoscout:171726535');
+});
+
+test('ImmoScout search links, logos, placeholders, tracking pixels and spoof hosts are excluded', () => {
+  const ctx = context();
+  for (const url of [
+    'https://www.immobilienscout24.de/',
+    'https://www.immobilienscout24.de/savedsearch/anonymous/delete?tokenV2=private',
+    'https://push.search.is24.de/email/Suche/controller/executeSavedSearch/radius',
+    'https://www.immobilienscout24.de/savedsearch/myscout/manage/',
+    'https://www.immobilienscout24.de/impressum.html',
+    'https://push.search.is24.de/email/expose/123abc',
+    'https://evil.immobilienscout24.de/expose/123',
+    'https://www.immobilienscout24.de.evil.test/expose/123'
+  ]) {
+    assert.equal(ctx.getMailListingId(url), '');
+    assert.deepEqual(plain(ctx.extractPropertyLinks('<a href="' + url + '">x</a>', '')), []);
+  }
+  const photos = plain(ctx.extractImmoScoutMailImages(fixture(scoutInstant)));
+  const urls = [
+    'https://pictures.immobilienscout24.de/usercontent/agency.JPG/ORIG/resize/100x40%3E/quality/80',
+    'https://www.static-immobilienscout24.de/statpic/mail/placeholder_no_image_v2.png',
+    'https://push.search.is24.de/email/relevant_123.gif?savedSearchId=private',
+    'https://pictures.immobilienscout24.de.evil.test/listings/photo.jpg',
+    'https://pictures.immobilienscout24.de/listings/../usercontent/agency.jpg',
+    'http://pictures.immobilienscout24.de/listings/photo.jpg'
+  ];
+  for (const url of urls) assert.equal(ctx.isPropertyImageUrl(url), false, url);
+  assert.deepEqual(plain(ctx.extractImmoScoutImages({
+    bild_urls: [photos[0].source_url, ...urls],
+    image_urls: [photos[0].source_url]
+  })), [photos[0].source_url]);
+  assert.deepEqual(plain(ctx.extractPropertyImageUrls('<img src="' + photos[0].source_url + '">')), []);
+});
+
+test('ImmoScout single listing is ready, reuses stored files and preserves retry on failure', () => {
+  let result = runQueue(fixture(scoutInstant));
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.equal(result.downloads, 1);
+  assert.equal(result.files[0].listing_id, 'immoscout:171726535');
+  assert.equal(result.files[0].listing_url, 'https://www.immobilienscout24.de/expose/171726535');
+  result = runQueue(fixture(scoutInstant), { oldFiles: result.files });
+  assert.equal(result.downloads, 0);
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.equal(runQueue(fixture(scoutInstant), { failDownload: true }).status[0], 'retry');
+});
+
+test('ImmoScout multi-listing, missing photos and shared photos retain retry', () => {
+  let result = runQueue(fixture(scoutWelcome));
+  assert.equal(result.status[0], 'retry');
+  assert.equal(result.status[2], '');
+  assert.equal(result.downloads, 8);
+  assert.deepEqual(result.files.map(f => f.listing_id), scoutPhotoIds.map(id => 'immoscout:' + id));
+  const ctx = context(), photo = ctx.extractImmoScoutMailImages(fixture(scoutInstant))[0];
+  const shared = '<a href="' + photo.listing_url + '"><img src="' + photo.source_url + '"></a>' +
+    '<a href="https://www.immobilienscout24.de/expose/123"><img src="' + photo.source_url + '"></a>';
+  result = runQueue(shared);
+  assert.equal(result.status[0], 'retry');
+  assert.equal(result.files[0].listing_id, undefined);
+  assert.match(result.status[1], /ohne eindeutige Inseratszuordnung/);
+  const missing = '<a href="' + photo.listing_url + '"><img src="https://www.static-immobilienscout24.de/statpic/mail/placeholder_no_image_v2.png"></a>';
+  result = runQueue(missing);
+  assert.equal(result.status[0], 'retry');
+  assert.equal(result.downloads, 0);
+});
+
+test('ImmoScout blacklist stops downloads for single, mixed and placeholder-only blocked listings', () => {
+  let result = runQueue(fixture(scoutInstant), { blocked: ['immoscout:171726535'] });
+  assert.equal(result.status[0], 'blocked');
+  assert.equal(result.downloads, 0);
+  result = runQueue(fixture(scoutWelcome), { blocked: ['immoscout:171420671'] });
+  assert.equal(result.status[0], 'retry');
+  assert.equal(result.downloads, 0);
+});
+
+test('Main registers ImmoScout for existing-listing imports and portal-name aliases', () => {
+  const ctx = vm.createContext({ console });
+  const sources = fs.readdirSync(path.join(root, 'apps-script')).filter(p => p.endsWith('.js'))
+    .map(p => fs.readFileSync(path.join(root, 'apps-script', p), 'utf8')).join('\n');
+  vm.runInContext(sources, ctx);
+  for (const name of ['ImmoScout', 'ImmoScout24', 'ImmobilienScout24.de', 'Immobilien Scout24']) {
+    assert.equal(ctx.normalizeProvider(name), 'immoscout');
+  }
+  assert.equal(vm.runInContext('CONFIG.providers.immoscout === extractImmoScoutImages', ctx), true);
 });

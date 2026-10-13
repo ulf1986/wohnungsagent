@@ -1,4 +1,4 @@
-# Pisos mail regression tests
+# Pisos and ImmoScout mail regression tests
 
 Run with Node.js: `node --test tests/pisos-mail.test.cjs`.
 
@@ -16,3 +16,15 @@ the live spreadsheet or write to Gmail/Drive.
 Multi-listing emails remain in retry even when individual photo links are known:
 the existing AI queue processes one listing per email. Files include listing_id
 and listing_url only when their source URL belongs to exactly one listing.
+
+ImmoScout fixtures come from Gmail messages `1a1344e0f79ea479` (one listing,
+one photo) and `1a12727237a1b36c` (welcome email with ten listings, eight photos
+and two placeholders). Personalized href queries and tracking pixels were
+removed; the original table/anchor/photo structure is retained.
+
+ImmoScout tracked links and direct Exposé links map to
+`immoscout:<Exposé-ID>`. Canonical URLs use
+`https://www.immobilienscout24.de/expose/<Exposé-ID>`.
+Only linked `pictures.immobilienscout24.de/listings/` photos are imported.
+`usercontent/` agency logos and static placeholder images are excluded.
+This imports photos present in the email, without fetching Exposé galleries.

@@ -17,7 +17,8 @@ const CONFIG = {
     fotocasa: extractFotocasaImages,
     idealista: extractIdealistaImages,
     yaencontre: extractYaencontreImages,
-    pisos: extractPisosImages
+    pisos: extractPisosImages,
+    immoscout: extractImmoScoutImages
   }
 };
 
@@ -440,6 +441,8 @@ function normalizeProvider(value) {
   if (name.includes('idealista')) return 'idealista';
   if (name.includes('yaencontre')) return 'yaencontre';
   if (name.includes('pisos')) return 'pisos';
+  if (name.includes('immoscout') || name.includes('immobilienscout') ||
+      name.includes('immobilien scout')) return 'immoscout';
 
   return '';
 }
@@ -572,3 +575,4 @@ function updateImageImportJson(
 
   return updated;
 }
+
