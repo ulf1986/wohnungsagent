@@ -273,23 +273,34 @@ function processExistingListingImages() {
         Number(data.image_import?.attempts || 0) + 1;
 
       if (!urls.length) {
+        // E-Mail-Queue kann Drive-Bilder liefern, ohne bild_urls im
+        // Anzeigen-JSON zu hinterlegen. Diese Bilder nicht als fehlend
+        // deklarieren. Sind keine Dateien bekannt: zeitgesteuert retry.
+        const hasFiles = previousFiles.some(file => file && file.file_id);
         updateImageImportJson(
           sheet, idCol, jsonCol, deleteCol,
           listingId, fresh => {
+            const files = Array.isArray(fresh.drive_files)
+              ? fresh.drive_files.filter(file => file && file.file_id)
+              : [];
             fresh.image_import = {
-              status: 'no_images',
+              status: files.length ? 'files_available' : 'retry',
               updated_at: new Date().toISOString(),
               attempts,
               source_signature: signature,
-              image_count: previousFiles.length
+              image_count: files.length,
+              error: files.length ? null : 'Keine Quell-URLs oder Drive-Dateien'
             };
-
-            // Vorhandene Bilder NIEMALS löschen.
+            if (files.some(file =>
+              !(fresh.analyzed_file_ids || []).includes(file.file_id)
+            )) {
+              fresh.ai_analysis_status = 'pending';
+            }
             return fresh;
           }
         );
-
-        stats.no_images++;
+        if (hasFiles) stats.completed++;
+        else stats.retry++;
         stats.processed++;
         continue;
       }
@@ -471,7 +482,7 @@ function shouldProcessImageImport(data, signature) {
 
   if (
     state.status === 'completed' ||
-    state.status === 'no_images'
+    state.status === 'files_available'
   ) {
     return false;
   }
@@ -485,7 +496,7 @@ function shouldProcessImageImport(data, signature) {
       CONFIG.processingTimeoutMinutes * 60000;
   }
 
-  if (state.status === 'retry') {
+  if (state.status === 'retry' || state.status === 'no_images') {
     return elapsed >=
       CONFIG.retryDelayMinutes * 60000;
   }
