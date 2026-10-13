@@ -190,10 +190,13 @@ function runGmailImagePipeline() {
 
         const mailImageUrls =
           extractPropertyImageUrls(html);
+        const pisosImages = extractPisosMailImages(html);
 
         const oldFiles = parseMailQueueFiles(
           queue.getRange(row, 14).getValue()
-        ).filter(file => isPropertyImageUrl(file.source_url));
+        ).filter(file => isPropertyImageUrl(file.source_url) &&
+          (!isPisosPropertyImageUrl(file.source_url) ||
+            pisosImages.some(image => image.source_url === file.source_url)));
 
         const allFiles = [...oldFiles];
         const fileIds = new Set(
@@ -296,6 +299,23 @@ function runGmailImagePipeline() {
           }
         }
 
+        // Pisos-Fotos nur freigeben, wenn ihr Link eine eindeutige ID liefert.
+        for (const file of allFiles) {
+          if (!isPisosPropertyImageUrl(file.source_url)) continue;
+          const owners = [...new Set(pisosImages
+            .filter(image => image.source_url === file.source_url)
+            .map(image => image.listing_id))];
+          delete file.listing_id;
+          delete file.listing_url;
+          if (owners.length === 1) {
+            file.listing_id = owners[0];
+            file.listing_url = pisosImages.find(image =>
+              image.source_url === file.source_url).listing_url;
+          } else {
+            errors.push('Pisos-Bild ohne eindeutige Inseratszuordnung');
+          }
+        }
+
         // Betreff, Text, Links, Bildreferenzen.
         queue.getRange(
           row, 10, 1, 5
@@ -348,7 +368,9 @@ function runGmailImagePipeline() {
           errors.join(' | ') ||
             (galleryUnavailable
               ? 'Galerie nicht vollständig erreichbar'
-              : ''),
+              : propertyIds.length > 1
+                ? 'Mehrfachangebote: keine Freigabe der gesamten Mail für eine einzelne Anzeige'
+                : ''),
           ready ? new Date().toISOString() : ''
         );
 
@@ -633,11 +655,11 @@ function extractPropertyLinks(html, plain) {
   const candidates = [];
 
   const htmlLinks = String(html).matchAll(
-    /href\s*=\s*["']([^"']+)["']/gi
+    /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi
   );
 
   for (const match of htmlLinks) {
-    candidates.push(match[1]);
+    candidates.push(match[1] || match[2] || match[3]);
   }
 
   candidates.push(...(
@@ -670,6 +692,12 @@ function extractPropertyLinks(html, plain) {
 
     if (!allowed) continue;
 
+    if (host === 'pisos.com' || host.endsWith('.pisos.com')) {
+      const listing = getPisosListing(url);
+      if (listing) result.add(listing.url);
+      continue;
+    }
+
     if (
       host.endsWith('idealista.com') &&
       !/\/inmueble\/\d+/i.test(url)
@@ -698,6 +726,7 @@ function extractIdealistaListingId(url) {
  * Bild-URLs aus dem E-Mail-HTML.
  */
 function isPropertyImageUrl(url) {
+  if (isPisosPropertyImageUrl(url)) return true;
   const match = String(url || '').match(/^https:\/\/([^\/?#]+)(\/[^?#]*)/i);
   if (!match) return false;
   const host = match[1].toLowerCase(), path = match[2].toLowerCase();
@@ -705,9 +734,7 @@ function isPropertyImageUrl(url) {
     path.startsWith('/img/photo/') && /\.(jpg|jpeg|png|webp)$/.test(path)) ||
     (host === 'static.fotocasa.es' &&
       (/^\/images\/ads\//.test(path) || /^\/images\/anuncio\//.test(path))) ||
-    (/(^|\.)img\d*\.idealista\.com$/.test(host)) ||
-    ((host === 'pisos.com' || host.endsWith('.pisos.com')) &&
-      /\.(jpg|jpeg|png|webp)$/.test(path));
+    (/(^|\.)img\d*\.idealista\.com$/.test(host));
 }
 
 function extractPropertyImageUrls(html) {
@@ -745,21 +772,18 @@ function extractPropertyImageUrls(html) {
       path.startsWith('/img/photo/') &&
       /\.(jpg|jpeg|png|webp)$/.test(path);
 
-    const pisos =
-      (
-        host === 'pisos.com' ||
-        host.endsWith('.pisos.com')
-      ) &&
-      /\.(jpg|jpeg|png|webp)$/.test(path);
-
     if (
-      (fotocasa || idealista || yaencontre || pisos) &&
+      (fotocasa || idealista || yaencontre) &&
       isPropertyImageUrl(url)
     ) {
       result.add(url);
     }
   }
 
+  // Pisos-Fotos benötigen den Inseratslink im umschließenden Bildblock.
+  for (const image of extractPisosMailImages(html)) {
+    result.add(image.source_url);
+  }
   return [...result];
 }
 
@@ -787,12 +811,13 @@ function readMailImageBlacklist(ss) {
 
 /** Portal und Datensatz-ID nur aus eindeutig erkennbaren Anzeigenlinks. */
 function getMailListingId(url) {
+  const pisos = getPisosListing(url);
+  if (pisos) return pisos.listing_id;
   const value = String(url || '');
   const rules = [
     ['idealista', /(?:^|\.)idealista\.com\/inmueble\/(\d+)/i],
     ['fotocasa', /(?:^|\.)fotocasa\.es\/es\/alquiler\/vivienda\/[^?#]*?\/(\d+)\/d(?:[?#]|$)/i],
-    ['yaencontre', /(?:^|\.)yaencontre\.com\/alquiler\/[^?#]*?-(\d+)(?:[?#]|$)/i],
-    ['pisos', /(?:^|\.)pisos\.com\/comprar\/[^?#]*?-(\d+)(?:[?#]|$)/i]
+    ['yaencontre', /(?:^|\.)yaencontre\.com\/alquiler\/[^?#]*?-(\d+)(?:[?#]|$)/i]
   ];
   for (const [portal, pattern] of rules) {
     const match = value.match(pattern);
@@ -800,3 +825,4 @@ function getMailListingId(url) {
   }
   return '';
 }
+

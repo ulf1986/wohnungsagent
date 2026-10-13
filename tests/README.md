@@ -1,0 +1,18 @@
+# Pisos mail regression tests
+
+Run with Node.js: `node --test tests/pisos-mail.test.cjs`.
+
+Fixtures come from the HTML bodies of Gmail messages
+`1a133c1c7fd31731` (daily, 10 individual listings plus a promoted development)
+and `1a13437fd8c3f700` (instant, one price reduction).
+Personalized href query strings and the notification tracking pixel were removed.
+The table/anchor/image structure and actual thumbnail URLs are preserved.
+
+Tests verify every listing/photo pair, general-link and layout-image exclusion,
+blacklist download prevention, stored-file reuse, download failures and queue
+statuses. Google services and downloads are mocked; tests never deploy, modify
+the live spreadsheet or write to Gmail/Drive.
+
+Multi-listing emails remain in retry even when individual photo links are known:
+the existing AI queue processes one listing per email. Files include listing_id
+and listing_url only when their source URL belongs to exactly one listing.
