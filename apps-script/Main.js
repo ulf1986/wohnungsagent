@@ -18,7 +18,8 @@ const CONFIG = {
     idealista: extractIdealistaImages,
     yaencontre: extractYaencontreImages,
     pisos: extractPisosImages,
-    immoscout: extractImmoScoutImages
+    immoscout: extractImmoScoutImages,
+    milanuncios: extractMilanunciosImages
   }
 };
 
@@ -443,6 +444,7 @@ function normalizeProvider(value) {
   if (name.includes('pisos')) return 'pisos';
   if (name.includes('immoscout') || name.includes('immobilienscout') ||
       name.includes('immobilien scout')) return 'immoscout';
+  if (name.includes('milanuncios')) return 'milanuncios';
 
   return '';
 }
