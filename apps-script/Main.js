@@ -6,7 +6,7 @@
 
 const CONFIG = {
   spreadsheetId:
-    '1bVko9OSTD5QtPsIuxmDDrGO-8S-L6iK0TnHPvI3HwvM',
+    '1_X-jdVIKwbqDABIssOOCjLC41qRqpb01paV1RtruMwg',
   sheetName: 'Anzeigen',
   folderProperty: 'WOHNUNGSAGENT_IMAGE_FOLDER_ID',
   maxImagesPerListing: 40,
