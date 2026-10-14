@@ -8,12 +8,13 @@
  * - Drive.gs
  * - IdealistaGalerie.gs
  *
- * Gmail ausschließlich lesen.
+ * Gmail liest Mails; Milanuncios-Mails erhalten zusätzlich das zentrale Suchauftragslabel.
  * Keine E-Mails verschicken.
  */
 
 const MAIL_IMPORT = {
   label: 'Wohnungssuche/Suchaufträge',
+  additionalSourceLabels: ['Milanuncios'],
   sheetName: 'Verarbeitung',
 
   lookbackDays: 7,
@@ -73,6 +74,15 @@ function runGmailImagePipeline() {
       );
     }
 
+    // Milanuncios-Mails dürfen direkt aus ihrem Portal-Label kommen.
+    // Sie erhalten dabei zusätzlich das zentrale Suchauftragslabel.
+    const sourceLabels = [label];
+    for (const name of MAIL_IMPORT.additionalSourceLabels || []) {
+      const extra = GmailApp.getUserLabelByName(name);
+      if (extra) sourceLabels.push(extra);
+      else console.warn('Optionales Gmail-Label fehlt: ' + name);
+    }
+
     const blockedIds = readMailImageBlacklist(ss);
 
     const existing = readMailQueueIndex(queue);
@@ -83,15 +93,16 @@ function runGmailImagePipeline() {
     const cutoff = Date.now() -
       MAIL_IMPORT.lookbackDays * 86400000;
 
-    const threads = label.getThreads(
-      0, MAIL_IMPORT.maxThreads
-    );
-
     const candidates = [];
     const seen = new Set();
 
-    for (const thread of threads) {
-      for (const mail of thread.getMessages()) {
+    for (const sourceLabel of sourceLabels) {
+      const threads = sourceLabel.getThreads(
+        0, MAIL_IMPORT.maxThreads
+      );
+
+      for (const thread of threads) {
+        for (const mail of thread.getMessages()) {
         if (mail.getDate().getTime() < cutoff) {
           continue;
         }
@@ -122,7 +133,14 @@ function runGmailImagePipeline() {
           continue;
         }
 
-        candidates.push(mail);
+          // E-Mails aus Milanuncios zusätzlich zentral kennzeichnen,
+          // damit sie auch außerhalb des Scriptlaufs als Suchauftrag sichtbar sind.
+          if (sourceLabel.getName() !== MAIL_IMPORT.label) {
+            mail.addLabel(label);
+          }
+
+          candidates.push(mail);
+        }
       }
     }
 
