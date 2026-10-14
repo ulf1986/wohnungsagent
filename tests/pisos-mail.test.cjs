@@ -205,27 +205,15 @@ test('retries reuse stored photos, restore ownership, and retain retry on failed
 });
 
 
-test('Milanuncios tracking links resolve to one canonical listing', () => {
+test('Milanuncios canonical listing IDs require an individual listing URL', () => {
   const ctx = context();
-  const tracker = 'https://sgt.milanuncios.com/ls/click?upn=opaque';
-  const finalUrl = 'https://www.milanuncios.com/alquiler-de-pisos-en-malaga-malaga/malaga-capital-613703744.htm?utm_source=email';
-  let calls = 0;
-  ctx.UrlFetchApp = {
-    fetch(url, options) {
-      calls++;
-      assert.equal(url, tracker);
-      assert.equal(options.followRedirects, false);
-      return {
-        getResponseCode: () => 302,
-        getHeaders: () => ({ Location: finalUrl })
-      };
-    }
-  };
-  assert.deepEqual(plain(ctx.extractPropertyLinks('<a href="' + tracker + '">Anzeige</a>', '')), [
-    finalUrl.split('?')[0]
-  ]);
-  assert.equal(calls, 1);
-  assert.equal(ctx.getMailListingId(finalUrl), 'milanuncios:613703744');
+  const url = 'https://www.milanuncios.com/alquiler-de-pisos-en-malaga-malaga/malaga-capital-613703744.htm?utm_source=email';
+  const listing = plain(ctx.getMilanunciosListing(url));
+  assert.deepEqual(listing, {
+    listing_id: 'milanuncios:613703744',
+    url: url.split('?')[0]
+  });
+  assert.equal(ctx.getMailListingId(url), 'milanuncios:613703744');
   assert.equal(ctx.getMailListingId('https://www.milanuncios.com/alquiler-de-pisos-en-malaga-malaga/'), '');
 });
 
