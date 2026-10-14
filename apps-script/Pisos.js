@@ -81,3 +81,4 @@ function extractPisosImages(data) {
   return uniqueImageUrls(candidates.filter(isPisosPropertyImageUrl));
 }
 
+function fetchPisosListingPage(url) { return fetchListingPage_(url, 'pisos'); }

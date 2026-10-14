@@ -6,7 +6,7 @@
 
 const CONFIG = {
   spreadsheetId:
-    '1bVko9OSTD5QtPsIuxmDDrGO-8S-L6iK0TnHPvI3HwvM',
+    '1_X-jdVIKwbqDABIssOOCjLC41qRqpb01paV1RtruMwg',
   sheetName: 'Anzeigen',
   folderProperty: 'WOHNUNGSAGENT_IMAGE_FOLDER_ID',
   maxImagesPerListing: 40,
@@ -18,7 +18,8 @@ const CONFIG = {
     idealista: extractIdealistaImages,
     yaencontre: extractYaencontreImages,
     pisos: extractPisosImages,
-    immoscout: extractImmoScoutImages
+    immoscout: extractImmoScoutImages,
+    milanuncios: extractMilanunciosImages
   }
 };
 
@@ -49,7 +50,7 @@ function runImageImport() {
  */
 function processExistingListingImages() {
   const sheet = SpreadsheetApp
-    .openById(CONFIG.spreadsheetId)
+    .openById(getWohnungsagentSpreadsheetId_())
     .getSheetByName(CONFIG.sheetName);
 
   if (!sheet) {
@@ -443,6 +444,7 @@ function normalizeProvider(value) {
   if (name.includes('pisos')) return 'pisos';
   if (name.includes('immoscout') || name.includes('immobilienscout') ||
       name.includes('immobilien scout')) return 'immoscout';
+  if (name.includes('milanuncios')) return 'milanuncios';
 
   return '';
 }

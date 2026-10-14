@@ -22,3 +22,5 @@ function extractYaencontreImages(data) {
 
   return uniqueImageUrls(candidates);
 }
+
+function fetchYaencontreListingPage(url) { return fetchListingPage_(url, 'yaencontre'); }

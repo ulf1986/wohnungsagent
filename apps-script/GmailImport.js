@@ -8,12 +8,13 @@
  * - Drive.gs
  * - IdealistaGalerie.gs
  *
- * Gmail ausschließlich lesen.
+ * Gmail liest Mails; Milanuncios-Mails erhalten zusätzlich das zentrale Suchauftragslabel.
  * Keine E-Mails verschicken.
  */
 
 const MAIL_IMPORT = {
   label: 'Wohnungssuche/Suchaufträge',
+  additionalSourceLabels: ['Milanuncios'],
   sheetName: 'Verarbeitung',
 
   lookbackDays: 7,
@@ -49,9 +50,7 @@ function runGmailImagePipeline() {
   }
 
   try {
-    const ss = SpreadsheetApp.openById(
-      CONFIG.spreadsheetId
-    );
+    const ss = SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_());
 
     const queue = ss.getSheetByName(
       MAIL_IMPORT.sheetName
@@ -75,6 +74,15 @@ function runGmailImagePipeline() {
       );
     }
 
+    // Milanuncios-Mails dürfen direkt aus ihrem Portal-Label kommen.
+    // Sie erhalten dabei zusätzlich das zentrale Suchauftragslabel.
+    const sourceLabels = [label];
+    for (const name of MAIL_IMPORT.additionalSourceLabels || []) {
+      const extra = GmailApp.getUserLabelByName(name);
+      if (extra) sourceLabels.push(extra);
+      else console.warn('Optionales Gmail-Label fehlt: ' + name);
+    }
+
     const blockedIds = readMailImageBlacklist(ss);
 
     const existing = readMailQueueIndex(queue);
@@ -85,15 +93,16 @@ function runGmailImagePipeline() {
     const cutoff = Date.now() -
       MAIL_IMPORT.lookbackDays * 86400000;
 
-    const threads = label.getThreads(
-      0, MAIL_IMPORT.maxThreads
-    );
-
     const candidates = [];
     const seen = new Set();
 
-    for (const thread of threads) {
-      for (const mail of thread.getMessages()) {
+    for (const sourceLabel of sourceLabels) {
+      const threads = sourceLabel.getThreads(
+        0, MAIL_IMPORT.maxThreads
+      );
+
+      for (const thread of threads) {
+        for (const mail of thread.getMessages()) {
         if (mail.getDate().getTime() < cutoff) {
           continue;
         }
@@ -124,7 +133,14 @@ function runGmailImagePipeline() {
           continue;
         }
 
-        candidates.push(mail);
+          // E-Mails aus Milanuncios zusätzlich zentral kennzeichnen,
+          // damit sie auch außerhalb des Scriptlaufs als Suchauftrag sichtbar sind.
+          if (sourceLabel !== label) {
+            mail.addLabel(label);
+          }
+
+          candidates.push(mail);
+        }
       }
     }
 
@@ -356,11 +372,17 @@ function runGmailImagePipeline() {
           status = 'completed';
         }
 
-        // Nur eine eindeutig zugeordnete Immobilie mit Drive-Bildern
-        // darf in die KI-Queue. Bildlose Angebote bleiben im Retry.
-        const oneListing = propertyIds.length === 1;
-        const ready = status === 'completed' && oneListing &&
-          allFiles.some(file => file.file_id && file.source_url);
+        // Eine Mail mit mehreren Anzeigen wird von der KI-Queue je Link
+        // abgearbeitet. Die KI ordnet je Lauf nur eindeutig zuordenbare
+        // Dateien zu; Downloads mit Fehlern bleiben vor der KI im Retry.
+        // Milanuncios-Mails enthalten oft keine verwendbaren Vorschaubilder.
+        // Diese Anzeigen werden trotzdem über Mail und Portalseite ausgewertet.
+        // Bei den übrigen Portalen bleibt „keine Bilder“ ein Retry, damit
+        // temporär fehlende oder nicht eindeutig zugeordnete Fotos nachkommen können.
+        const onlyMilanuncios = propertyIds.length > 0 &&
+          propertyIds.every(id => String(id).startsWith('milanuncios:'));
+        const ready = !galleryUnavailable && propertyIds.length > 0 &&
+          (status === 'completed' || (status === 'no_images' && onlyMilanuncios));
         if (ready) status = 'ready_for_ai';
         else if (status === 'completed') status = 'retry';
         else if (status === 'no_images' || status === 'gallery_unavailable')
@@ -374,7 +396,7 @@ function runGmailImagePipeline() {
             (galleryUnavailable
               ? 'Galerie nicht vollständig erreichbar'
               : propertyIds.length > 1
-                ? 'Mehrfachangebote: keine Freigabe der gesamten Mail für eine einzelne Anzeige'
+                ? 'Mehrfachangebote: KI-Queue verarbeitet jeden eindeutig verlinkten Eintrag separat'
                 : ''),
           ready ? new Date().toISOString() : ''
         );
@@ -430,6 +452,15 @@ try {
         'Fehler beim Anzeigen-Bildimport: ' +
         error.message
       );
+    }
+
+    // 2. Eine vorbereitete Mail-Queue-Anzeige mit KI verarbeiten.
+    // E-Mail, Portalseite und Bildbatches werden über Triggerläufe fortgesetzt.
+    try {
+      const aiStats = processNextAiListing(ss, queue);
+      console.log('KI-Verarbeitung: ' + JSON.stringify(aiStats));
+    } catch (error) {
+      console.error('Fehler bei der KI-Verarbeitung: ' + error.message);
     }
 
     // Original-Bildquellen auch bei bereits importierten Anzeigen prüfen.
@@ -673,6 +704,10 @@ function extractPropertyLinks(html, plain) {
     ) || []
   ));
 
+  // Milanuncios liefert pro Anzeige SendGrid-Tracking-Links. Erst die
+  // kontrollierte Weiterleitung ergibt die echte Anzeigen-URL.
+  candidates.push(...resolveMilanunciosTrackingLinks_(candidates));
+
   const result = new Set();
 
   for (const raw of candidates) {
@@ -691,7 +726,8 @@ function extractPropertyLinks(html, plain) {
       'yaencontre.com',
       'pisos.com',
       'immobilienscout24.de',
-      'push.search.is24.de'
+      'push.search.is24.de',
+      'milanuncios.com'
     ].some(domain =>
       host === domain ||
       host.endsWith('.' + domain)
@@ -708,6 +744,12 @@ function extractPropertyLinks(html, plain) {
 
     if (host === 'pisos.com' || host.endsWith('.pisos.com')) {
       const listing = getPisosListing(url);
+      if (listing) result.add(listing.url);
+      continue;
+    }
+
+    if (host === 'milanuncios.com' || host.endsWith('.milanuncios.com')) {
+      const listing = getMilanunciosListing(url);
       if (listing) result.add(listing.url);
       continue;
     }
@@ -840,6 +882,8 @@ function getMailListingId(url) {
   if (immoscout) return immoscout.listing_id;
   const pisos = getPisosListing(url);
   if (pisos) return pisos.listing_id;
+  const milanuncios = getMilanunciosListing(url);
+  if (milanuncios) return milanuncios.listing_id;
   const value = String(url || '');
   const rules = [
     ['idealista', /(?:^|\.)idealista\.com\/inmueble\/(\d+)/i],

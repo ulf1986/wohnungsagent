@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const root = path.join(__dirname, '..');
 function context() {
   const ctx = vm.createContext({ console: { log() {}, warn() {}, error() {} } });
-  for (const name of ['Drive', 'Pisos', 'ImmoScout', 'GmailImport']) {
+  for (const name of ['Drive', 'Pisos', 'ImmoScout', 'Milanuncios', 'GmailImport']) {
     vm.runInContext(fs.readFileSync(path.join(root, 'apps-script', name + '.js'), 'utf8'), ctx);
   }
   return ctx;
@@ -125,6 +125,7 @@ function runQueue(html, { blocked = [], oldFiles = [], failDownload = false } = 
   };
   Object.assign(ctx, {
     CONFIG: { spreadsheetId: 'test', sheetName: 'Anzeigen' },
+    getWohnungsagentSpreadsheetId_: () => 'test',
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     SpreadsheetApp: { openById: () => ({ getSheetByName: () => sheet }), flush() {} },
     GmailApp: { getUserLabelByName: () => ({ getThreads: () => [{ getMessages: () => [mail] }] }) },
@@ -162,11 +163,10 @@ test('single listing reaches ready_for_ai with the correct file ownership', () =
   assert.equal(result.links.length, 1);
 });
 
-test('daily multi-listing email retains retry and separate file ownership', () => {
+test('daily multi-listing email enters AI queue with separate file ownership', () => {
   const result = runQueue(fixture(daily));
-  assert.equal(result.status[0], 'retry');
-  assert.equal(result.status[2], '');
-  assert.match(result.status[1], /Mehrfachangebote/);
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.ok(result.status[2]);
   assert.equal(result.downloads, 10);
   assert.deepEqual(result.files.map(f => f.listing_id), ids.map(id => 'pisos:' + id));
 });
@@ -202,6 +202,19 @@ test('retries reuse stored photos, restore ownership, and retain retry on failed
   assert.equal(result.files[0].listing_id, 'pisos:67520671658');
   assert.equal(runQueue(fixture(instant), { failDownload: true }).status[0], 'retry');
   assert.equal(runQueue('<a href="' + photo.listing_url + '">no photo</a>').status[0], 'retry');
+});
+
+
+test('Milanuncios canonical listing IDs require an individual listing URL', () => {
+  const ctx = context();
+  const url = 'https://www.milanuncios.com/alquiler-de-pisos-en-malaga-malaga/malaga-capital-613703744.htm?utm_source=email';
+  const listing = plain(ctx.getMilanunciosListing(url));
+  assert.deepEqual(listing, {
+    listing_id: 'milanuncios:613703744',
+    url: url.split('?')[0]
+  });
+  assert.equal(ctx.getMailListingId(url), 'milanuncios:613703744');
+  assert.equal(ctx.getMailListingId('https://www.milanuncios.com/alquiler-de-pisos-en-malaga-malaga/'), '');
 });
 
 test('other portals retain image extraction and stable listing IDs', () => {
@@ -320,10 +333,10 @@ test('ImmoScout single listing is ready, reuses stored files and preserves retry
   assert.equal(runQueue(fixture(scoutInstant), { failDownload: true }).status[0], 'retry');
 });
 
-test('ImmoScout multi-listing, missing photos and shared photos retain retry', () => {
+test('ImmoScout multi-listing enters per-listing AI queue; ambiguous and missing photos retain retry', () => {
   let result = runQueue(fixture(scoutWelcome));
-  assert.equal(result.status[0], 'retry');
-  assert.equal(result.status[2], '');
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.ok(result.status[2]);
   assert.equal(result.downloads, 8);
   assert.deepEqual(result.files.map(f => f.listing_id), scoutPhotoIds.map(id => 'immoscout:' + id));
   const ctx = context(), photo = ctx.extractImmoScoutMailImages(fixture(scoutInstant))[0];
