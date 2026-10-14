@@ -109,11 +109,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
   if (!listingUrl) throw new Error('Link für Anzeigen-ID fehlt: ' + listingId);
   const oneListing = links.length === 1;
   const safePrefix = String(listingId).toLowerCase().replace(/[^a-z0-9_-]+/g, '_') + '_';
-  const queueFiles = oneListing ? allQueueFiles : allQueueFiles.filter(file =>
-    file && (file.listing_id === listingId ||
-      getMailListingId(file.listing_url || '') === listingId ||
-      String(file.name || '').toLowerCase().startsWith(safePrefix))
-  );
+  const queueFiles = filterListingDriveFiles_(allQueueFiles, listingId, oneListing);
   if (!listingId) throw new Error('Anzeigen-ID konnte aus dem Portal-Link nicht ermittelt werden.');
 
   setAiQueueState_(queue, rowNo, index, 'processing', '', '');
@@ -128,11 +124,11 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       return { status: 'blocked', listingId };
     }
     const existingRow = findListingRow_(sheet, cols, listingId);
-    const listingRow = existingRow || appendListingRow_(sheet, cols, listingId, mailId, listingUrl, subject, q, qi);
+    const listingRow = existingRow || appendListingRow_(sheet, cols, listingId, mailId, listingUrl, subject, q, qi, queueFiles);
     queue.getRange(rowNo, index.listingId + 1).setValue(listingId);
     const data = parseAiListingJson_(sheet.getRange(listingRow, cols['Bildanalyse JSON'] + 1).getValue());
     data.ai_pipeline = data.ai_pipeline || {};
-    data.drive_files = mergeDriveFiles_(data.drive_files || [], queueFiles);
+    data.drive_files = mergeDriveFiles_(filterListingDriveFiles_(data.drive_files || [], listingId, oneListing), queueFiles);
     data.source_email_id = mailId;
     data.analyzed_file_ids = Array.isArray(data.analyzed_file_ids) ? data.analyzed_file_ids : [];
     data.image_reviews = Array.isArray(data.image_reviews) ? data.image_reviews : [];
@@ -180,6 +176,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       const found = findDriveListingFiles_(listingId, mailId);
       data.drive_files = mergeDriveFiles_(data.drive_files, found);
       if (!found.length) {
+        finalizeAiListing_(sheet, listingRow, cols, data, emailFields);
         sheet.getRange(listingRow, cols['KI-Bewertung'] + 1).setValue('Keine Fotos');
         data.ai_analysis_status = 'no_images';
         writeListingJson_(sheet, listingRow, cols, data);
@@ -471,7 +468,7 @@ function makeOpenFields_(data, fields) {
   return [...missing].join('; ');
 }
 function listingPageMissingFields_(f) {
-  const keys=['rent_eur','area_m2','rooms','address','neighborhood','long_term','terrace','pool'];
+  const keys=['title','rent_eur','area_m2','rooms','address','neighborhood','rental_type','long_term','student_only','seasonal_or_short_term','terrace','pool','contact_email','contact_phone'];
   return keys.filter(k => f[k] === null || f[k] === undefined || f[k] === '');
 }
 function mergeMissingOnly_(first, second) {
@@ -484,7 +481,7 @@ function applyListingFields_(sheet,row,cols,fields,source) {
   for (const [key,header] of Object.entries(map)) if (fields[key]!==null && fields[key]!==undefined) setListingValue_(sheet,row,cols,header,fields[key]);
   if ((Number.isFinite(Number(fields.rent_eur)) && Number(fields.rent_eur) < 800) || fields.student_only === true || fields.seasonal_or_short_term === true || fields.long_term === false) setListingValue_(sheet,row,cols,'Status','Ausgeschlossen');
 }
-function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi) {
+function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   if (isListingBlacklisted_(SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_()),id)) throw new Error('Datensatz-ID steht in der Sperrliste.');
   const row=sheet.getLastRow()+1;
   const values=Array(sheet.getLastColumn()).fill('');
@@ -495,7 +492,7 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi) {
   assign('Eingang (UTC)',q[qi['Queue Eingang UTC']]||new Date().toISOString());
   assign('E-Mail-ID',mailId); assign('Gmail-Link','https://mail.google.com/mail/u/0/#all/'+mailId);
   assign('KI-Bewertung','In Bearbeitung'); assign('Status','Vorläufig');
-  assign('Bildanalyse JSON',JSON.stringify({ai_analysis_status:'pending',source_email_id:mailId,drive_files:parseJsonArray_(q[qi['Queue Drive-Dateien JSON']]),analyzed_file_ids:[]}));
+  assign('Bildanalyse JSON',JSON.stringify({ai_analysis_status:'pending',source_email_id:mailId,drive_files:listingFiles||[],analyzed_file_ids:[]}));
   sheet.getRange(row,1,1,values.length).setValues([values]);
   return row;
 }
@@ -516,6 +513,10 @@ function writeListingJson_(sheet,row,cols,data) { sheet.getRange(row,cols['Bilda
 function parseAiListingJson_(value) { if(!value)return {}; try { const x=JSON.parse(String(value)); return x&&typeof x==='object'&&!Array.isArray(x)?x:{}; } catch(e){return {};} }
 function parseJsonArray_(value) { if(!value)return []; try { const x=JSON.parse(String(value)); return Array.isArray(x)?x:[]; } catch(e){return [];} }
 function mergeDriveFiles_(a,b) { const out=[]; const seen=new Set(); for(const x of [...(a||[]),...(b||[])]) { if(!x||!x.file_id||seen.has(x.file_id))continue; seen.add(x.file_id); out.push(x); } return out; }
+function filterListingDriveFiles_(files, listingId, allowUnassigned) {
+  const safePrefix=String(listingId||'').toLowerCase().replace(/[^a-z0-9_-]+/g,'_')+'_';
+  return (files||[]).filter(file=>file&&file.file_id&&(allowUnassigned||file.listing_id===listingId||getMailListingId(file.listing_url||'')===listingId||String(file.name||'').toLowerCase().startsWith(safePrefix)));
+}
 function finiteNumber_(x) { return x !== null && x !== undefined && x !== '' && Number.isFinite(Number(x)) ? Number(x) : ''; }
 function canonicalListingUrl_(x) { return typeof x==='string'?x:String((x&&x.url)||''); }
 function getWohnungsagentSpreadsheetId_() { return PropertiesService.getScriptProperties().getProperty('WOHNUNGSAGENT_SPREADSHEET_ID') || CONFIG.spreadsheetId; }
