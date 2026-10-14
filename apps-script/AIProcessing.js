@@ -103,17 +103,16 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
   const body = String(q[qi['Queue Originaltext']] || '');
   const links = parseJsonArray_(q[qi['Queue Inseratslinks JSON']]).map(canonicalListingUrl_).filter(Boolean);
   const allQueueFiles = parseJsonArray_(q[qi['Queue Drive-Dateien JSON']]);
-  if (!mailId || !links.length) throw new Error('Queue-Eintrag ohne Gmail-ID oder Inseratslink.');
   const listingId = target.listingId || getMailListingId(links[0]);
   const listingUrl = links.find(url => getMailListingId(url) === listingId) || '';
-  if (!listingUrl) throw new Error('Link für Anzeigen-ID fehlt: ' + listingId);
   const oneListing = links.length === 1;
   const safePrefix = String(listingId).toLowerCase().replace(/[^a-z0-9_-]+/g, '_') + '_';
   const queueFiles = filterListingDriveFiles_(allQueueFiles, listingId, oneListing);
-  if (!listingId) throw new Error('Anzeigen-ID konnte aus dem Portal-Link nicht ermittelt werden.');
-
   setAiQueueState_(queue, rowNo, index, 'processing', '', '');
   try {
+    if (!mailId || !links.length) throw new Error('Queue-Eintrag ohne Gmail-ID oder Inseratslink.');
+    if (!listingId) throw new Error('Anzeigen-ID konnte aus dem Portal-Link nicht ermittelt werden.');
+    if (!listingUrl) throw new Error('Link für Anzeigen-ID fehlt: ' + listingId);
     const config = getOpenAiConfig_();
     const sheet = ss.getSheetByName(AI_PIPELINE.listingSheetName);
     if (!sheet) throw new Error('Tabellenblatt Anzeigen fehlt.');
