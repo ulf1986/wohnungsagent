@@ -1,69 +1,71 @@
-# Zielarchitektur: Wohnungsagent mit Apps Script und KI
+# Apps-Script-Automation für den Wohnungsagenten
 
 Stand: 14. Oktober 2026  
 Repository: `ulf1986/wohnungsagent`  
 Apps-Script-Projekt: `Wohnungsagent – Immobilienbilder`
 
-## Ziel
+## Zweck
 
-Apps Script übernimmt den regelmäßigen Ablauf von der Gmail-Suche bis zur Aktualisierung der Tabelle. Eine KI-API wird nur für Inhalte eingesetzt, bei denen unstrukturierter Text oder Bildverständnis nötig ist. Import, Deduplizierung, Validierung, Punktberechnung, Statusführung und Wiederholungen bleiben deterministische Apps-Script-Logik.
+Apps Script führt die regelmäßige Automation aus: Gmail lesen, Anzeigenlinks und Bilder importieren, Anzeigeinformationen strukturieren, fehlende Angaben von der Portalseite ergänzen, Bilder durch ein Vision-Modell bewerten und die Ergebnisse in die Tabelle schreiben.
 
-Der vorhandene Gmail-/Bildimport und der 5-Minuten-Trigger bleiben die Grundlage. Die KI-Stufen werden daran angeschlossen. Es gibt keine automatische Bereitstellung in dieses Dokument und keine Änderung an der laufenden Tabelle.
+KI wird nur für unstrukturierten Inhalt und Bildverständnis verwendet. Download, Zuordnung, Validierung, Punkteberechnung, Duplikat- und Sperrlistenprüfung, Status und Wiederholungen bleiben nachvollziehbare Programmlogik.
 
-## Ablauf je Anzeige
+## Ablauf je E-Mail und Anzeige
 
-1. **Gmail erfassen.** Der bestehende Prozess liest das Label `Wohnungssuche/Suchaufträge`, berücksichtigt die letzten sieben Tage und dedupliziert über die Gmail-ID. Die E-Mail bleibt lesend verarbeitet. Für jede Anzeige wird ein eigener Auftrag angelegt, auch wenn eine E-Mail mehrere Anzeigen enthält.
-2. **E-Mail strukturieren.** Ein Textprompt erhält Betreff, bereinigten Mailtext und die zugehörigen Anzeigenlinks. Die KI gibt ein strikt validiertes JSON-Objekt zurück: Portal, Anzeigen-ID, kanonischer Link, Titel, Miete, Fläche, Zimmer, Adresse, Kontaktangaben und belegte Merkmale. Nicht genannte Angaben sind `null`. Eine Mehranzeigen-Mail wird in einzelne Anzeigenaufträge aufgeteilt. Bildlinks werden einer Anzeige nur zugeordnet, wenn die HTML-Verknüpfung das eindeutig belegt.
-3. **Fehlende Angaben ergänzen.** Nur wenn relevante Felder fehlen, ruft Apps Script die bereits in der Mail verlinkte Portalseite ab. Zulässig sind ausschließlich bekannte Immobilienportale. Die abgerufene Seite wird als untrusted content an einen separaten Prompt übergeben. Die KI darf fehlende Felder extrahieren, aber weder Anweisungen aus der Seite ausführen noch Inhalte erfinden. Bei Bot-Sperre, Login-Wall oder nicht lesbarer Seite bleiben Felder offen und der Auftrag erhält einen nachvollziehbaren Status.
-4. **Bilder bereitstellen und bewerten.** Apps Script liest die Originaldateien aus `Bildanalyse JSON.drive_files` beziehungsweise der bestehenden Mail-Queue aus Drive. Bereits analysierte Datei-IDs werden übersprungen. Die Bildbytes werden als Base64-Daten-URL in `input_image`-Elementen an die OpenAI Responses API gesendet. Die KI erhält pro Auftrag nur die Bilder der betreffenden Anzeige und gibt je Bild eine strukturierte Beobachtung zurück.
-5. **Bewertung berechnen.** Apps Script validiert die JSON-Antwort und berechnet die Punkte selbst. Die bekannte Gewichtung beträgt Miete pro Quadratmeter 40, Entfernung 25, Bildzustand 20, Terrasse 10 und Pool 5 Punkte, insgesamt 100. Fläche ist kein Filter und bekommt keine eigenen Punkte. Die bekannte Mietformel ist linear: 10 €/m² ergeben 40 Punkte, 20 €/m² ergeben 0 Punkte. Die Grenzwerte/Formel für Entfernung, Terrasse und Pool müssen als feste Konstanten im Code hinterlegt werden, sobald die geltenden Regeln abschließend vorliegen. Die KI darf diese Punktwerte nicht schätzen. Alle gespeicherten Punktwerte sind ganze Zahlen.
-6. **Tabelle aktualisieren.** Werte werden anhand der Header-Namen statt fester Spaltenbuchstaben geschrieben. `Lagebeschreibung` enthält ausschließlich Himmelsrichtung und geschätzte Entfernung in Kilometern von 29001 Málaga. `Merkmale` enthält nur belegte Ausstattung. `Zusammenfassung` enthält die kompakte KI-Bildbewertung und wiederholt keine Angaben aus Merkmalen oder Lage. Fehlende Fakten bleiben leer und werden in `Offene Angaben` geführt. `Einschränkungen` bleibt davon getrennt.
-7. **Abschluss prüfen.** `KI-Bewertung = Abgeschlossen` darf erst gesetzt werden, wenn alle relevanten gespeicherten Drive-Bilder analysiert und alle Pflichtfelder validiert sind. Bei `In Bearbeitung` werden offene Analysen fortgesetzt. Bei `Keine Fotos` durchsucht Apps Script den konfigurierten Drive-Ordner samt Unterordnern erneut. Sind dort Dateien vorhanden, startet die Bildanalyse. Fehlender Drive-Zugriff ist ein Fehler, kein Beleg für fehlende Fotos.
+1. **E-Mail finden.** Der bestehende Gmail-Import liest das Label `Wohnungssuche/Suchaufträge`, begrenzt die Suche auf die letzten sieben Tage und dedupliziert über die Gmail-ID. E-Mails werden nur gelesen.
+2. **Links und Bilder importieren.** Der Mailtext und die Inseratslinks werden in der Queue abgelegt. Die vorhandene Bilderkennung lädt bekannte Vorschaubilder und Galerie-Bilder in Drive. Die Dateien werden anhand von Anzeigen-ID, Portal-Link oder einem eindeutigen Dateinamen zugeordnet. Bei mehreren Inseraten wird ein Link pro Triggerlauf bearbeitet; unzugeordnete Mailbilder werden nicht willkürlich einem Inserat zugewiesen.
+3. **Mailtext mit KI auswerten.** Ein Prompt erhält Betreff, Text und genau einen Inseratslink. Die Responses API muss ein strukturiertes JSON gemäß Schema liefern. Nur ausdrücklich belegte Werte werden übernommen; Unbekanntes bleibt `null`.
+4. **Portalseite ergänzen.** Wenn wichtige Angaben noch fehlen, ruft Apps Script die verlinkte Seite über den passenden Portaladapter ab. Die Adapter liegen in `Fotocasa.js`, `Idealista.js`, `Yaencontre.js`, `Pisos.js` und `ImmoScout.js`. Titel, Metadaten, JSON-LD und sichtbarer Seitentext werden gekürzt an einen eigenen Extraktionsprompt übergeben. Die KI behandelt Seiteninhalt als Daten, nicht als Anweisungen. Bei Login-Schranke, Bot-Schutz oder HTTP-Fehler bleibt die Information offen und wird als solche ausgewiesen.
+5. **Bilder durch KI bewerten.** Erst nach dem vorhandenen Download liest Apps Script die Drive-Dateien des betreffenden Inserats. Es sendet bis zu fünf Bilder pro Anfrage als Base64-Bildinput. Bewertet werden Helligkeit/Tageslicht, Raumgefühl, Möbelzustand und Pflege/Renovierung; die KI liefert außerdem kurze Beobachtungen zu Fenstern, Grün/Ausblick, Küche, Raumform und Unsicherheiten durch Weitwinkel oder künstliche Aufhellung. Abgeschlossene Datei-IDs werden gespeichert, damit Folge-Trigger nur noch nicht geprüfte Bilder senden.
+6. **Felder und Punkte schreiben.** Das Programm validiert die KI-Antwort, ergänzt belegte Felder und berechnet Punkte selbst. Geschrieben wird anhand der Tabellen-Header, nicht über feste Spaltenpositionen. `Zusammenfassung` enthält nur die knappe Bildbewertung; `Merkmale` enthält belegte Ausstattungsmerkmale und Zimmer; `Lage zu 29001` enthält nur Himmelsrichtung und geschätzte Entfernung.
+7. **Queue fortsetzen.** Der vorhandene fünfminütige Trigger verarbeitet pro Aufruf einen KI-Schritt bzw. Bildbatch und setzt später fort. Ein Script-Lock verhindert parallele Läufe. Fehler werden mit exponentieller Wartezeit wiederholt.
 
-## Prompt-Verträge
+## Aufteilung der Skripte
 
-### E-Mail- und Webseitenextraktion
+| Datei | Aufgabe |
+| --- | --- |
+| `Main.js` | Konfiguration, Tabellenzugriff und vorhandene Anzeigen-/Bildlogik |
+| `GmailImport.js` | Gmail-Suche, Mailqueue, Bildimport, Aufruf der KI-Verarbeitung im bestehenden Triggerlauf |
+| `AIProcessing.js` | KI-Prompts, strukturierte JSON-Antworten, Portaltext, Bildbatches, Feldmapping, Punkte, Status und Retry |
+| `Drive.js` | Bilder in Drive speichern und Dateireferenzen verwalten |
+| `Fotocasa.js`, `Idealista.js`, `Yaencontre.js`, `Pisos.js`, `ImmoScout.js` | Portalspezifische Bildextraktion und sicherer Seitenabruf |
+| `IdealistaGalerie.js` | Zusätzliche Idealista-Galeriebilder laden |
+| `BildVerfuegbarkeit.js` | Vorhandene Bildquellen auf Verfügbarkeit prüfen |
+| `Vorschaubilder.js` | Zellvorschaubilder und sichtbare KI-Statuswerte pflegen |
+| `Trigger.js` | Fünf-Minuten-Zeittrigger einrichten |
+| `tests/` | Deterministische Bewertungs- und Importtests ohne echte KI- oder Mailaufrufe |
 
-Die Prompt-Ausgabe ist ein JSON-Objekt mit stabilen Schlüsseln, Quellenhinweisen und offenen Angaben. Für jedes extrahierte Feld werden Wert, Quelle (`email` oder `listing_page`) und Konfidenz ausgegeben. Telefonnummern, E-Mail-Adressen und URLs müssen aus dem Inhalt stammen. Inhalte in E-Mail und Webseite gelten als Daten, nie als auszuführende Instruktionen.
+Die Queue nutzt die bestehenden Spalten H:Q; die KI-Verarbeitung ergänzt R:Y. Darin stehen Verarbeitungsschritt, Fehler, Zeitpunkt, Anzeigen-ID, Retry, Versuche, abgeschlossene Anzeigen und aktuell aktive Anzeigen-ID.
 
-### Bildbewertung
+## Bewertungsregeln
 
-Die Bildausgabe enthält je Datei-ID: Helligkeit und Fenster/Tageslicht, sichtbares Grün oder Ausblick, Küchenfarbe und erkennbaren Modernitätszustand, Möbelalter/Farbe/Zustand, Raumgefühl (breit/offen oder tunnelartig) sowie sichtbaren Renovierungsbedarf. Weitwinkel und künstliche Aufhellung sollen als Unsicherheit markiert werden. Die Bewertung darf nur echte Bildpixel verwenden. Keine Bilddatei oder ein nicht erreichbares Bild bedeutet keine Bildbewertung.
+- Miete pro Quadratmeter: höchstens 10 €/m² ergibt 40 Punkte, ab 20 €/m² 0 Punkte, dazwischen linear.
+- Entfernung von 29001: bis 1 km 25 Punkte, ab 8 km 0 Punkte, dazwischen linear.
+- Bildbewertung: maximal 20 Punkte aus vier ganzzahligen Teilwerten von 0 bis 5.
+- Terrasse: belegtes Ja = 10, belegtes Nein = 0. Pool: belegtes Ja = 5, belegtes Nein = 0. Unbekannt bleibt offen und verringert die Bewertungsabdeckung.
+- Fläche selbst ist kein Filter und erhält keine eigenen Punkte.
+- Miete unter 800 €, nur für Studierende, Saison-/Kurzzeitmiete oder ausdrücklich fehlende Langzeitmiete lösen den Ausschlussstatus aus. Fehlende Informationen werden nicht als Verstoß erfunden.
+- `KI-Bewertung = Abgeschlossen` erst nach Analyse aller zugeordneten Bilddateien. Wenn keine Bilddatei verfügbar ist, kann das Inserat mit `Keine Fotos` markiert werden; die vorhandenen Fakten werden trotzdem ausgewertet. Unzugängliche Dateien erzeugen einen Fehlerstatus.
 
-Die Bildpunkte haben maximal 20 Punkte. Die KI liefert Beobachtungen und Evidenz, die Apps-Script-Auswertung ordnet sie anhand fester Regeln in Punkte ein. Damit ändern sich Punktwerte nicht durch Promptschwankungen. Die Ausgabe verwendet ganze Zahlen.
+Die Punkte sind ganze Zahlen. Die KI liefert Fakten und Bildbeobachtungen, aber keine Punktwerte.
 
-## API- und Laufzeitgrenzen
+## OpenAI- und Apps-Script-Grenzen
 
-- Die OpenAI Images-and-Vision-Dokumentation nennt aktuell höchstens 1.500 Bilder und 512 MB Gesamtpayload je Anfrage. Das ist ein technisches API-Maximum, keine sinnvolle Batchgröße für diese Automation.
-- Apps Script begrenzt einen `UrlFetchApp`-POST auf 50 MB. Base64 vergrößert den Inhalt um ungefähr ein Drittel. Deshalb verarbeitet der Job Bilder in kleinen Batches von zunächst höchstens fünf Dateien und höchstens 10 MB Rohbilddaten pro API-Aufruf. Bei einer Überschreitung wird der Batch verkleinert oder in Folgeausführungen fortgesetzt.
-- Die Modell-, Größen- und Kontextgrenzen gelten zusätzlich. Ein Prompt mit weniger Bildern ist leichter überprüfbar und reduziert das Risiko, dass eine Anzeige wegen eines API- oder Apps-Script-Zeitlimits unvollständig bleibt.
-- Apps Script läuft höchstens sechs Minuten pro Ausführung. Der Trigger setzt die Arbeit regelmäßig fort; jeder Durchlauf hält ein Zeitbudget ein und speichert den Fortschritt nach jedem erfolgreich verarbeiteten Auftrag.
-- Zeittrigger laufen unter dem Konto der Person, die sie erstellt hat, und können sich verzögern. Die Architektur kann daher regelmäßige Wiederaufnahme und Statusüberwachung bieten, aber keine sekundengenaue Laufzeit garantieren.
+Die OpenAI-Dokumentation erlaubt Bildinput als URL, Base64-Daten-URL oder File-ID und nennt als technisches Maximum 1.500 Bilder und 512 MB je Anfrage. Praktisch begrenzen wir den Request deutlich kleiner: höchstens fünf Bilder und 10 MB Rohbilddaten je Batch. Eine einzelne Bilddatei über 35 MB wird mit sichtbarem Fehler abgebrochen, damit die Base64-Anfrage unter dem 50-MB-POST-Limit von Apps Script bleibt. Apps Script darf höchstens sechs Minuten pro Ausführung laufen; der bestehende Trigger setzt die Queue anschließend fort.
 
-## Trigger, Idempotenz und Fehlerbehandlung
+Die Bilder werden als Base64 direkt an die Responses API gesendet, nicht zusätzlich über die Files API hochgeladen. Requests verwenden `store: false`. Der API-Schlüssel und das Modell liegen in Script Properties `OPENAI_API_KEY` und `OPENAI_MODEL`.
 
-Der bestehende 5-Minuten-Trigger wird zum einzigen Scheduler für Import und KI-Queue. Ein Script-Lock verhindert parallele Läufe. Jeder Auftrag hat eine stabile Schlüsselung aus Datensatz-ID, Gmail-ID und Stufe. Erfolgreiche Teilresultate und analysierte Drive-Datei-IDs werden vor dem nächsten Auftrag gespeichert.
+Für ein neues, sauberes Google Sheet kann die Tabellenstruktur kopiert und die veralteten Datenzeilen vor dem Start entfernt werden. Die Automation unterstützt dafür die Script Property `WOHNUNGSAGENT_SPREADSHEET_ID`; wenn sie fehlt, wird die bestehende Tabellen-ID verwendet. Die alte Tabelle bleibt unangetastet. Für den Start muss die neue Tabellen-ID als Script Property gesetzt werden.
 
-Status je Stufe: `pending`, `processing`, `completed`, `retry`, `error` oder `blocked`. `processing` älter als 60 Minuten wird wieder aufgenommen. Temporäre HTTP-Fehler, Quotenlimits und Timeouts erhalten exponentielle Wartezeit mit Obergrenze. Dauerhafte Fehler und nicht erreichbare Seiten bleiben sichtbar und werden nicht als erfolgreiche Analyse markiert. Logs enthalten IDs, Stufe, Dauer und Fehlercode, jedoch keine API-Schlüssel oder vollständigen E-Mail-Inhalte.
+## Validierung und Bereitstellung
 
-## Konfiguration und Datenschutz
+Die Unit-Tests prüfen Miet- und Distanzpunkte, Ausschlussregeln, Bildantworten und die Trennung von Bildern bei mehreren Anzeigen. GitHub Actions prüft zusätzlich die JavaScript-Syntax aller Apps-Script-Dateien. Tests verwenden keine echten Gmail-Nachrichten, Drive-Dateien oder OpenAI-Aufrufe.
 
-Der OpenAI-Schlüssel und die Modellkennung liegen ausschließlich in Apps Script Script Properties. Sie gehören weder in Git noch in Tabellenzellen oder Logs. Die API-Anfragen verwenden `store: false`, soweit das gewählte Responses-Modell dies unterstützt. Für die bevorzugte Übertragung als Base64-Daten-URL werden die Bilder nicht separat in der Files API gespeichert. Falls später File-IDs verwendet werden, braucht es eine explizite Löschroutine und einen Test für Fehlerabbrüche.
+Ein Deploy ist davon getrennt und bleibt ein bewusster manueller Schritt über den vorhandenen GitHub-Workflow. Vor dem ersten Lauf im neuen Sheet müssen `OPENAI_API_KEY`, `OPENAI_MODEL` und `WOHNUNGSAGENT_SPREADSHEET_ID` in den Script Properties gesetzt sowie Gmail-, Drive- und Tabellenberechtigungen erteilt sein.
 
-Die Apps-Script-Skript-ID, Spreadsheet-ID und Drive-Ordner-ID bleiben Konfiguration und werden nicht in die Prompttexte eingebettet. Änderungen an Produktionscode werden erst nach Regressionstests und einer bewussten manuellen Bereitstellung über den vorhandenen GitHub-Workflow live geschaltet.
-
-## Geplante Umsetzung
-
-1. JSON-Schema, Feldmapping nach Headern und deterministische Bewertungsregeln festlegen.
-2. KI-Client mit API-Key aus Script Properties, Schema-Validierung, Zeitbudget und kontrollierten Retries ergänzen.
-3. E-Mail-Extraktion je Anzeige und sicheren Abruf verlinkter Portalseiten integrieren.
-4. Bildanalyse in kleinen Batches ergänzen, mit Speicherung je Datei-ID und Wiederaufnahme nach Fehlern.
-5. Regressionstests mit anonymisierten E-Mail-/HTML-Fixtures und Mock-API-Antworten ergänzen. Tests dürfen keine echten E-Mails, Drive-Dateien oder Live-API-Aufträge verwenden.
-6. Erst danach den manuellen Deploy-Workflow verwenden und Trigger/Status in der Live-Tabelle kontrollieren.
-
-## Quellen für aktuelle Plattformgrenzen
+## Quellen
 
 - OpenAI, [Images and vision](https://developers.openai.com/api/docs/guides/images-vision)
-- OpenAI, [Responses API: create a response](https://developers.openai.com/api/reference/resources/responses/methods/create)
+- OpenAI, [Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)
 - Google, [Apps Script quotas](https://developers.google.com/apps-script/guides/services/quotas)
 - Google, [Installable triggers](https://developers.google.com/apps-script/guides/triggers/installable)
