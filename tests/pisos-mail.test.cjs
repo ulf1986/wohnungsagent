@@ -125,6 +125,7 @@ function runQueue(html, { blocked = [], oldFiles = [], failDownload = false } = 
   };
   Object.assign(ctx, {
     CONFIG: { spreadsheetId: 'test', sheetName: 'Anzeigen' },
+    getWohnungsagentSpreadsheetId_: () => 'test',
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     SpreadsheetApp: { openById: () => ({ getSheetByName: () => sheet }), flush() {} },
     GmailApp: { getUserLabelByName: () => ({ getThreads: () => [{ getMessages: () => [mail] }] }) },
