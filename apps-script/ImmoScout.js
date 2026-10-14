@@ -59,3 +59,4 @@ function extractImmoScoutImages(data) {
   return uniqueImageUrls(candidates.filter(isImmoScoutPropertyImageUrl));
 }
 
+function fetchImmoScoutListingPage(url) { return fetchListingPage_(url, 'immoscout'); }
