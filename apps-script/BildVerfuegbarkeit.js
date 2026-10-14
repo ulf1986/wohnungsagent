@@ -5,7 +5,7 @@
  * verifiziert HTTP 404/410; nicht etwa eine zerstörte Drive-Datei.
  */
 function checkListingImageAvailabilityInternal() {
-  const ss = SpreadsheetApp.openById(CONFIG.spreadsheetId);
+  const ss = SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_());
   const sheet = ss.getSheetByName(CONFIG.sheetName);
   const settings = ss.getSheetByName('Sperrliste');
   if (!sheet || !settings) throw new Error('Anzeigen/Einstellungen fehlen');
