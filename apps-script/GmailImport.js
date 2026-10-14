@@ -135,7 +135,7 @@ function runGmailImagePipeline() {
 
           // E-Mails aus Milanuncios zusätzlich zentral kennzeichnen,
           // damit sie auch außerhalb des Scriptlaufs als Suchauftrag sichtbar sind.
-          if (sourceLabel.getName() !== MAIL_IMPORT.label) {
+          if (sourceLabel !== label) {
             mail.addLabel(label);
           }
 
