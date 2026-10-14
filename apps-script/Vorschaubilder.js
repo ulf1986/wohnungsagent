@@ -24,7 +24,7 @@ function updateListingPreviews() {
 }
 
 function updateListingPreviewsInternal() {
-  const sheet = SpreadsheetApp.openById(CONFIG.spreadsheetId)
+  const sheet = SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_())
     .getSheetByName(CONFIG.sheetName);
   if (!sheet) throw new Error('Anzeigen-Tabelle nicht gefunden.');
   const lastRow = sheet.getLastRow();
