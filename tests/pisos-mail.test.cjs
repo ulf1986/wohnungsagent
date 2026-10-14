@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const root = path.join(__dirname, '..');
 function context() {
   const ctx = vm.createContext({ console: { log() {}, warn() {}, error() {} } });
-  for (const name of ['Drive', 'Pisos', 'ImmoScout', 'GmailImport']) {
+  for (const name of ['Drive', 'Pisos', 'ImmoScout', 'Milanuncios', 'GmailImport']) {
     vm.runInContext(fs.readFileSync(path.join(root, 'apps-script', name + '.js'), 'utf8'), ctx);
   }
   return ctx;
@@ -202,6 +202,32 @@ test('retries reuse stored photos, restore ownership, and retain retry on failed
   assert.equal(result.files[0].listing_id, 'pisos:67520671658');
   assert.equal(runQueue(fixture(instant), { failDownload: true }).status[0], 'retry');
   assert.equal(runQueue('<a href="' + photo.listing_url + '">no photo</a>').status[0], 'retry');
+});
+
+
+test('Milanuncios tracking links resolve to one canonical listing', () => {
+  const ctx = context();
+  const tracker = 'https://sgt.milanuncios.com/ls/click?upn=opaque';
+  const finalUrl = 'https://www.milanuncios.com/alquiler-de-pisos-en-malaga-malaga/malaga-capital-613703744.htm?utm_source=email';
+  let calls = 0;
+  ctx.UrlFetchApp = {
+    fetch(url, options) {
+      calls++;
+      assert.equal(url, tracker);
+      assert.equal(options.followRedirects, false);
+      return {
+        getResponseCode: () => 302,
+        getHeaders: () => ({ Location: finalUrl })
+      };
+    }
+  };
+  assert.deepEqual(plain(ctx.extractPropertyLinks('<a href="' + tracker + '">Anzeige</a>', '')), [
+    finalUrl.split('?')[0]
+  ]);
+  assert.equal(calls, 1);
+  assert.equal(ctx.getMailListingId(finalUrl), 'milanuncios:613703744');
+  assert.equal(ctx.getMailListingId('https://www.milanuncios.com/alquiler-de-pisos-en-malaga-malaga/'), '');
+  assert.equal(ctx.normalizeProvider('Milanuncios'), 'milanuncios');
 });
 
 test('other portals retain image extraction and stable listing IDs', () => {
