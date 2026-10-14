@@ -8,3 +8,5 @@ function extractIdealistaImages(data) {
 
   return uniqueImageUrls(candidates);
 }
+
+function fetchIdealistaListingPage(url) { return fetchListingPage_(url, 'idealista'); }
