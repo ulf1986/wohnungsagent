@@ -321,10 +321,10 @@ test('ImmoScout single listing is ready, reuses stored files and preserves retry
   assert.equal(runQueue(fixture(scoutInstant), { failDownload: true }).status[0], 'retry');
 });
 
-test('ImmoScout multi-listing, missing photos and shared photos retain retry', () => {
+test('ImmoScout multi-listing enters per-listing AI queue; ambiguous and missing photos retain retry', () => {
   let result = runQueue(fixture(scoutWelcome));
-  assert.equal(result.status[0], 'retry');
-  assert.equal(result.status[2], '');
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.ok(result.status[2]);
   assert.equal(result.downloads, 8);
   assert.deepEqual(result.files.map(f => f.listing_id), scoutPhotoIds.map(id => 'immoscout:' + id));
   const ctx = context(), photo = ctx.extractImmoScoutMailImages(fixture(scoutInstant))[0];
