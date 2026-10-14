@@ -24,3 +24,5 @@ function extractFotocasaImages(data) {
       .test(url)
   );
 }
+
+function fetchFotocasaListingPage(url) { return fetchListingPage_(url, 'fotocasa'); }
