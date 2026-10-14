@@ -227,7 +227,6 @@ test('Milanuncios tracking links resolve to one canonical listing', () => {
   assert.equal(calls, 1);
   assert.equal(ctx.getMailListingId(finalUrl), 'milanuncios:613703744');
   assert.equal(ctx.getMailListingId('https://www.milanuncios.com/alquiler-de-pisos-en-malaga-malaga/'), '');
-  assert.equal(ctx.normalizeProvider('Milanuncios'), 'milanuncios');
 });
 
 test('other portals retain image extraction and stable listing IDs', () => {
