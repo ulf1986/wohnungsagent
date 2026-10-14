@@ -20,7 +20,9 @@ const AI_PIPELINE = {
     'KI Aktualisiert UTC',
     'KI Datensatz-ID',
     'KI Wiederholung ab UTC',
-    'KI Versuche'
+    'KI Versuche',
+    'KI Abgeschlossene Anzeigen JSON',
+    'KI Aktuelle Anzeigen-ID'
   ],
   statusReady: 'ready_for_ai',
   batchImageCount: 5,
@@ -69,8 +71,28 @@ function processNextAiListing(ss, queue) {
   }
   if (!target) return { status: 'no_ready_jobs' };
 
-  // The caller already holds the pipeline lock.
-  return processAiQueueRow_(ss, queue, target, qi, index);
+  const links = parseJsonArray_(target.values[qi['Queue Inseratslinks JSON']]).map(canonicalListingUrl_).filter(Boolean);
+  const ids = [...new Set(links.map(getMailListingId).filter(Boolean))];
+  const done = parseJsonArray_(target.values[index.doneIds]);
+  let activeId = String(target.values[index.activeId] || '').trim();
+  if (!activeId || done.includes(activeId)) activeId = ids.find(id => !done.includes(id)) || '';
+  if (!activeId) {
+    setAiQueueState_(queue, target.rowNumber, index, 'completed', '', '');
+    return { status: 'completed', listings: done.length };
+  }
+  target.listingId = activeId;
+  queue.getRange(target.rowNumber, index.activeId + 1).setValue(activeId);
+  queue.getRange(target.rowNumber, index.listingId + 1).setValue(activeId);
+  const result = processAiQueueRow_(ss, queue, target, qi, index);
+  if (['completed','no_images','blocked'].includes(result.status)) {
+    if (!done.includes(activeId)) done.push(activeId);
+    queue.getRange(target.rowNumber, index.doneIds + 1).setValue(JSON.stringify(done));
+    queue.getRange(target.rowNumber, index.activeId + 1).clearContent();
+    const finished = ids.every(id => done.includes(id));
+    setAiQueueState_(queue, target.rowNumber, index, finished ? 'completed' : 'pending', '', '');
+    return Object.assign({}, result, { listingsCompleted: done.length, listingsTotal: ids.length, queueStatus: finished ? 'completed' : 'pending' });
+  }
+  return result;
 }
 
 function processAiQueueRow_(ss, queue, target, qi, index) {
@@ -79,11 +101,19 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
   const mailId = String(q[qi['Queue Gmail-ID']] || '').trim();
   const subject = String(q[qi['Queue Betreff']] || '');
   const body = String(q[qi['Queue Originaltext']] || '');
-  const links = parseJsonArray_(q[qi['Queue Inseratslinks JSON']]);
-  const queueFiles = parseJsonArray_(q[qi['Queue Drive-Dateien JSON']]);
+  const links = parseJsonArray_(q[qi['Queue Inseratslinks JSON']]).map(canonicalListingUrl_).filter(Boolean);
+  const allQueueFiles = parseJsonArray_(q[qi['Queue Drive-Dateien JSON']]);
   if (!mailId || !links.length) throw new Error('Queue-Eintrag ohne Gmail-ID oder Inseratslink.');
-  const listingUrl = canonicalListingUrl_(links[0]);
-  const listingId = getMailListingId(listingUrl);
+  const listingId = target.listingId || getMailListingId(links[0]);
+  const listingUrl = links.find(url => getMailListingId(url) === listingId) || '';
+  if (!listingUrl) throw new Error('Link für Anzeigen-ID fehlt: ' + listingId);
+  const oneListing = links.length === 1;
+  const safePrefix = String(listingId).toLowerCase().replace(/[^a-z0-9_-]+/g, '_') + '_';
+  const queueFiles = oneListing ? allQueueFiles : allQueueFiles.filter(file =>
+    file && (file.listing_id === listingId ||
+      getMailListingId(file.listing_url || '') === listingId ||
+      String(file.name || '').toLowerCase().startsWith(safePrefix))
+  );
   if (!listingId) throw new Error('Anzeigen-ID konnte aus dem Portal-Link nicht ermittelt werden.');
 
   setAiQueueState_(queue, rowNo, index, 'processing', '', '');
@@ -153,7 +183,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
         sheet.getRange(listingRow, cols['KI-Bewertung'] + 1).setValue('Keine Fotos');
         data.ai_analysis_status = 'no_images';
         writeListingJson_(sheet, listingRow, cols, data);
-        setAiQueueState_(queue, rowNo, index, 'completed', '', '');
+        setAiQueueState_(queue, rowNo, index, 'pending', '', '');
         return { status: 'no_images', listingId };
       }
     }
@@ -163,7 +193,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     const pending = files.filter(file => !analyzed.has(file.file_id));
     if (!pending.length) {
       finalizeAiListing_(sheet, listingRow, cols, data, emailFields);
-      setAiQueueState_(queue, rowNo, index, 'completed', '', '');
+      setAiQueueState_(queue, rowNo, index, 'pending', '', '');
       return { status: 'completed', listingId };
     }
 
@@ -195,7 +225,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     writeListingJson_(sheet, listingRow, cols, data);
     if (data.ai_analysis_status === 'completed') {
       finalizeAiListing_(sheet, listingRow, cols, data, emailFields);
-      setAiQueueState_(queue, rowNo, index, 'completed', '', '');
+      setAiQueueState_(queue, rowNo, index, 'pending', '', '');
     } else {
       sheet.getRange(listingRow, cols['KI-Bewertung'] + 1).setValue('In Bearbeitung');
       sheet.getRange(listingRow, cols['Status'] + 1).setValue('Vorläufig; ' + data.analyzed_file_ids.length + '/' + files.length + ' Drive-Dateien geprüft');
@@ -219,7 +249,7 @@ function ensureAiQueueColumns_(queue) {
   const range = queue.getRange(1, start, 1, AI_PIPELINE.queueHeaders.length);
   const current = range.getValues()[0];
   for (let i = 0; i < current.length; i++) {
-    if (current[i] && current[i] !== AI_PIPELINE.queueHeaders[i]) throw new Error('Queue-Spalte R:V bereits anderweitig belegt.');
+    if (current[i] && current[i] !== AI_PIPELINE.queueHeaders[i]) throw new Error('Queue-Spalte R:Y bereits anderweitig belegt.');
   }
   range.setValues([AI_PIPELINE.queueHeaders]);
 }
@@ -234,7 +264,8 @@ function aiQueueColumnIndex_(queue) {
   return {
     status: at('KI Verarbeitungsstatus'), error: at('KI Fehler'), updated: at('KI Aktualisiert UTC'),
     listingId: at('KI Datensatz-ID'), retryAt: at('KI Wiederholung ab UTC'),
-    attempts: headers.indexOf('KI Versuche')
+    attempts: at('KI Versuche'), doneIds: at('KI Abgeschlossene Anzeigen JSON'),
+    activeId: at('KI Aktuelle Anzeigen-ID')
   };
 }
 
@@ -412,11 +443,11 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
 }
 
 function scoreRentPerM2_(rent, area) {
-  if (!Number.isFinite(Number(rent)) || !Number.isFinite(Number(area)) || Number(area) <= 0) return null;
+  if (rent === null || rent === undefined || rent === '' || area === null || area === undefined || area === '' || !Number.isFinite(Number(rent)) || !Number.isFinite(Number(area)) || Number(area) <= 0) return null;
   return Math.round(Math.max(0, Math.min(40, 40 * (20 - Number(rent) / Number(area)) / 10)));
 }
 function scoreDistanceKm_(km) {
-  if (!Number.isFinite(Number(km)) || Number(km) < 0) return null;
+  if (km === null || km === undefined || km === '' || !Number.isFinite(Number(km)) || Number(km) < 0) return null;
   return Math.round(Math.max(0, Math.min(25, 25 * (8 - Number(km)) / 7)));
 }
 function formatLocation_(direction, km) {
@@ -426,7 +457,7 @@ function formatLocation_(direction, km) {
 }
 function rentalDecision_(f) {
   const issues=[];
-  if (Number.isFinite(Number(f.rent_eur)) && Number(f.rent_eur) < 800) issues.push('Miete unter 800 €');
+  if (f.rent_eur !== null && f.rent_eur !== undefined && f.rent_eur !== '' && Number.isFinite(Number(f.rent_eur)) && Number(f.rent_eur) < 800) issues.push('Miete unter 800 €');
   if (f.student_only === true) issues.push('Nur für Studierende');
   if (f.seasonal_or_short_term === true) issues.push('Saison-/Kurzzeitmiete');
   if (f.long_term === false) issues.push('Langzeitmiete nicht bestätigt');
@@ -485,7 +516,7 @@ function writeListingJson_(sheet,row,cols,data) { sheet.getRange(row,cols['Bilda
 function parseAiListingJson_(value) { if(!value)return {}; try { const x=JSON.parse(String(value)); return x&&typeof x==='object'&&!Array.isArray(x)?x:{}; } catch(e){return {};} }
 function parseJsonArray_(value) { if(!value)return []; try { const x=JSON.parse(String(value)); return Array.isArray(x)?x:[]; } catch(e){return [];} }
 function mergeDriveFiles_(a,b) { const out=[]; const seen=new Set(); for(const x of [...(a||[]),...(b||[])]) { if(!x||!x.file_id||seen.has(x.file_id))continue; seen.add(x.file_id); out.push(x); } return out; }
-function finiteNumber_(x) { return Number.isFinite(Number(x)) ? Number(x) : ''; }
+function finiteNumber_(x) { return x !== null && x !== undefined && x !== '' && Number.isFinite(Number(x)) ? Number(x) : ''; }
 function canonicalListingUrl_(x) { return typeof x==='string'?x:String((x&&x.url)||''); }
 function getWohnungsagentSpreadsheetId_() { return PropertiesService.getScriptProperties().getProperty('WOHNUNGSAGENT_SPREADSHEET_ID') || CONFIG.spreadsheetId; }
 function isListingBlacklisted_(ss,id) { const sh=ss.getSheetByName('Sperrliste'); if(!sh||sh.getLastRow()<2)return false; return sh.getRange(2,1,sh.getLastRow()-1,1).getValues().some(r=>String(r[0]||'').trim()===id); }
