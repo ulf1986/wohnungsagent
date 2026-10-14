@@ -527,7 +527,7 @@ function findDriveListingFiles_(listingId,mailId) {
 function fetchListingPageForProvider_(url) {
   const host=(String(url).match(/^https:\/\/([^/?#]+)/i)||[])[1]||'';
   const provider=normalizeProvider(host);
-  const fn={fotocasa:fetchFotocasaListingPage,idealista:fetchIdealistaListingPage,yaencontre:fetchYaencontreListingPage,pisos:fetchPisosListingPage,immoscout:fetchImmoScoutListingPage}[provider];
+  const fn={fotocasa:fetchFotocasaListingPage,idealista:fetchIdealistaListingPage,yaencontre:fetchYaencontreListingPage,pisos:fetchPisosListingPage,immoscout:fetchImmoScoutListingPage,milanuncios:fetchMilanunciosListingPage}[provider];
   if(!fn)return {status:'blocked',error:'Portal-Domain nicht freigegeben.'};
   return fn(url);
 }
