@@ -49,7 +49,7 @@ function runImageImport() {
  */
 function processExistingListingImages() {
   const sheet = SpreadsheetApp
-    .openById(CONFIG.spreadsheetId)
+    .openById(getWohnungsagentSpreadsheetId_())
     .getSheetByName(CONFIG.sheetName);
 
   if (!sheet) {
