@@ -375,8 +375,10 @@ function runGmailImagePipeline() {
         // Eine Mail mit mehreren Anzeigen wird von der KI-Queue je Link
         // abgearbeitet. Die KI ordnet je Lauf nur eindeutig zuordenbare
         // Dateien zu; Downloads mit Fehlern bleiben vor der KI im Retry.
-        const ready = status === 'completed' && propertyIds.length > 0 &&
-          allFiles.some(file => file.file_id && file.source_url);
+        // Die KI kann eine Anzeige auch ohne Fotos anhand von Mail und
+        // Portalseite auswerten. Sie markiert den Datensatz dann als „Keine Fotos“.
+        const ready = !galleryUnavailable && propertyIds.length > 0 &&
+          (status === 'completed' || status === 'no_images');
         if (ready) status = 'ready_for_ai';
         else if (status === 'completed') status = 'retry';
         else if (status === 'no_images' || status === 'gallery_unavailable')
@@ -698,6 +700,10 @@ function extractPropertyLinks(html, plain) {
     ) || []
   ));
 
+  // Milanuncios liefert pro Anzeige SendGrid-Tracking-Links. Erst die
+  // kontrollierte Weiterleitung ergibt die echte Anzeigen-URL.
+  candidates.push(...resolveMilanunciosTrackingLinks_(candidates));
+
   const result = new Set();
 
   for (const raw of candidates) {
@@ -716,7 +722,8 @@ function extractPropertyLinks(html, plain) {
       'yaencontre.com',
       'pisos.com',
       'immobilienscout24.de',
-      'push.search.is24.de'
+      'push.search.is24.de',
+      'milanuncios.com'
     ].some(domain =>
       host === domain ||
       host.endsWith('.' + domain)
@@ -733,6 +740,12 @@ function extractPropertyLinks(html, plain) {
 
     if (host === 'pisos.com' || host.endsWith('.pisos.com')) {
       const listing = getPisosListing(url);
+      if (listing) result.add(listing.url);
+      continue;
+    }
+
+    if (host === 'milanuncios.com' || host.endsWith('.milanuncios.com')) {
+      const listing = getMilanunciosListing(url);
       if (listing) result.add(listing.url);
       continue;
     }
@@ -865,6 +878,8 @@ function getMailListingId(url) {
   if (immoscout) return immoscout.listing_id;
   const pisos = getPisosListing(url);
   if (pisos) return pisos.listing_id;
+  const milanuncios = getMilanunciosListing(url);
+  if (milanuncios) return milanuncios.listing_id;
   const value = String(url || '');
   const rules = [
     ['idealista', /(?:^|\.)idealista\.com\/inmueble\/(\d+)/i],
