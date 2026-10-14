@@ -163,11 +163,10 @@ test('single listing reaches ready_for_ai with the correct file ownership', () =
   assert.equal(result.links.length, 1);
 });
 
-test('daily multi-listing email retains retry and separate file ownership', () => {
+test('daily multi-listing email enters AI queue with separate file ownership', () => {
   const result = runQueue(fixture(daily));
-  assert.equal(result.status[0], 'retry');
-  assert.equal(result.status[2], '');
-  assert.match(result.status[1], /Mehrfachangebote/);
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.ok(result.status[2]);
   assert.equal(result.downloads, 10);
   assert.deepEqual(result.files.map(f => f.listing_id), ids.map(id => 'pisos:' + id));
 });
