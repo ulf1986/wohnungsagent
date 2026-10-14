@@ -430,6 +430,15 @@ try {
       );
     }
 
+    // 2. Eine vorbereitete Mail-Queue-Anzeige mit KI verarbeiten.
+    // E-Mail, Portalseite und Bildbatches werden über Triggerläufe fortgesetzt.
+    try {
+      const aiStats = processNextAiListing(ss, queue);
+      console.log('KI-Verarbeitung: ' + JSON.stringify(aiStats));
+    } catch (error) {
+      console.error('Fehler bei der KI-Verarbeitung: ' + error.message);
+    }
+
     // Original-Bildquellen auch bei bereits importierten Anzeigen prüfen.
     // Nur wiederholt bestätigte HTTP 404/410 führen zur Sperrung.
     try {
