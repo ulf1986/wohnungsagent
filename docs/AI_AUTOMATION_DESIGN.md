@@ -55,7 +55,7 @@ Die OpenAI-Dokumentation erlaubt Bildinput als URL, Base64-Daten-URL oder File-I
 
 Die Bilder werden als Base64 direkt an die Responses API gesendet, nicht zusätzlich über die Files API hochgeladen. Requests verwenden `store: false`. Der API-Schlüssel und das Modell liegen in Script Properties `OPENAI_API_KEY` und `OPENAI_MODEL`.
 
-Für ein neues, sauberes Google Sheet kann die Tabellenstruktur kopiert und die veralteten Datenzeilen vor dem Start entfernt werden. Die Automation unterstützt dafür die Script Property `WOHNUNGSAGENT_SPREADSHEET_ID`; wenn sie fehlt, wird die bestehende Tabellen-ID verwendet. Die alte Tabelle bleibt unangetastet. Für den Start muss die neue Tabellen-ID als Script Property gesetzt werden.
+Für ein neues, sauberes Google Sheet kann die Tabellenstruktur kopiert und die veralteten Datenzeilen vor dem Start entfernt werden. Die Automation verwendet standardmäßig die neue Tabellen-ID. Die Script Property `WOHNUNGSAGENT_SPREADSHEET_ID` kann sie bei Bedarf überschreiben. Die alte Tabelle bleibt unangetastet.
 
 ## Validierung und Bereitstellung
 
