@@ -354,10 +354,10 @@ function runGmailImagePipeline() {
           status = 'completed';
         }
 
-        // Nur eine eindeutig zugeordnete Immobilie mit Drive-Bildern
-        // darf in die KI-Queue. Bildlose Angebote bleiben im Retry.
-        const oneListing = propertyIds.length === 1;
-        const ready = status === 'completed' && oneListing &&
+        // Eine Mail mit mehreren Anzeigen wird von der KI-Queue je Link
+        // abgearbeitet. Die KI ordnet je Lauf nur eindeutig zuordenbare
+        // Dateien zu; Downloads mit Fehlern bleiben vor der KI im Retry.
+        const ready = status === 'completed' && propertyIds.length > 0 &&
           allFiles.some(file => file.file_id && file.source_url);
         if (ready) status = 'ready_for_ai';
         else if (status === 'completed') status = 'retry';
@@ -372,7 +372,7 @@ function runGmailImagePipeline() {
             (galleryUnavailable
               ? 'Galerie nicht vollständig erreichbar'
               : propertyIds.length > 1
-                ? 'Mehrfachangebote: keine Freigabe der gesamten Mail für eine einzelne Anzeige'
+                ? 'Mehrfachangebote: KI-Queue verarbeitet jeden eindeutig verlinkten Eintrag separat'
                 : ''),
           ready ? new Date().toISOString() : ''
         );
