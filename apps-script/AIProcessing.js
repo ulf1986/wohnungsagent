@@ -100,7 +100,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     const existingRow = findListingRow_(sheet, cols, listingId);
     const listingRow = existingRow || appendListingRow_(sheet, cols, listingId, mailId, listingUrl, subject, q, qi);
     queue.getRange(rowNo, index.listingId + 1).setValue(listingId);
-    const data = parseImageJson(sheet.getRange(listingRow, cols['Bildanalyse JSON'] + 1).getValue());
+    const data = parseAiListingJson_(sheet.getRange(listingRow, cols['Bildanalyse JSON'] + 1).getValue());
     data.ai_pipeline = data.ai_pipeline || {};
     data.drive_files = mergeDriveFiles_(data.drive_files || [], queueFiles);
     data.source_email_id = mailId;
@@ -451,10 +451,7 @@ function mergeMissingOnly_(first, second) {
 function applyListingFields_(sheet,row,cols,fields,source) {
   const map={ title:'Titel', rent_eur:'Miete', area_m2:'Fläche', rental_type:'Mietart / Laufzeit' };
   for (const [key,header] of Object.entries(map)) if (fields[key]!==null && fields[key]!==undefined) setListingValue_(sheet,row,cols,header,fields[key]);
-  if (fields.rent_eur !== null && fields.area_m2 !== null) {
-    const rent=Number(fields.rent_eur), area=Number(fields.area_m2);
-    if (rent < 800 || fields.student_only === true || fields.seasonal_or_short_term === true || fields.long_term === false) setListingValue_(sheet,row,cols,'Status','Ausgeschlossen');
-  }
+  if ((Number.isFinite(Number(fields.rent_eur)) && Number(fields.rent_eur) < 800) || fields.student_only === true || fields.seasonal_or_short_term === true || fields.long_term === false) setListingValue_(sheet,row,cols,'Status','Ausgeschlossen');
 }
 function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi) {
   if (isListingBlacklisted_(SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_()),id)) throw new Error('Datensatz-ID steht in der Sperrliste.');
@@ -485,7 +482,7 @@ function findListingRow_(sheet,cols,id) {
 }
 function setListingValue_(sheet,row,cols,name,value) { if(cols[name]!==undefined) sheet.getRange(row,cols[name]+1).setValue(value); }
 function writeListingJson_(sheet,row,cols,data) { sheet.getRange(row,cols['Bildanalyse JSON']+1).setValue(JSON.stringify(data)); SpreadsheetApp.flush(); }
-function parseImageJson(value) { if(!value)return {}; try { const x=JSON.parse(String(value)); return x&&typeof x==='object'&&!Array.isArray(x)?x:{}; } catch(e){return {};} }
+function parseAiListingJson_(value) { if(!value)return {}; try { const x=JSON.parse(String(value)); return x&&typeof x==='object'&&!Array.isArray(x)?x:{}; } catch(e){return {};} }
 function parseJsonArray_(value) { if(!value)return []; try { const x=JSON.parse(String(value)); return Array.isArray(x)?x:[]; } catch(e){return [];} }
 function mergeDriveFiles_(a,b) { const out=[]; const seen=new Set(); for(const x of [...(a||[]),...(b||[])]) { if(!x||!x.file_id||seen.has(x.file_id))continue; seen.add(x.file_id); out.push(x); } return out; }
 function finiteNumber_(x) { return Number.isFinite(Number(x)) ? Number(x) : ''; }
@@ -524,8 +521,3 @@ function extractListingPageText_(html) {
   pieces.push(visible); return pieces.join('\n').replace(/\s+/g,' ').trim();
 }
 
-function fetchFotocasaListingPage(url) { return fetchListingPage_(url, 'fotocasa'); }
-function fetchIdealistaListingPage(url) { return fetchListingPage_(url, 'idealista'); }
-function fetchYaencontreListingPage(url) { return fetchListingPage_(url, 'yaencontre'); }
-function fetchPisosListingPage(url) { return fetchListingPage_(url, 'pisos'); }
-function fetchImmoScoutListingPage(url) { return fetchListingPage_(url, 'immoscout'); }
