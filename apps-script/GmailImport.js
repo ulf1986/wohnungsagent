@@ -49,9 +49,7 @@ function runGmailImagePipeline() {
   }
 
   try {
-    const ss = SpreadsheetApp.openById(
-      CONFIG.spreadsheetId
-    );
+    const ss = SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_());
 
     const queue = ss.getSheetByName(
       MAIL_IMPORT.sheetName
