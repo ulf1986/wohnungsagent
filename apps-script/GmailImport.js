@@ -375,10 +375,14 @@ function runGmailImagePipeline() {
         // Eine Mail mit mehreren Anzeigen wird von der KI-Queue je Link
         // abgearbeitet. Die KI ordnet je Lauf nur eindeutig zuordenbare
         // Dateien zu; Downloads mit Fehlern bleiben vor der KI im Retry.
-        // Die KI kann eine Anzeige auch ohne Fotos anhand von Mail und
-        // Portalseite auswerten. Sie markiert den Datensatz dann als „Keine Fotos“.
+        // Milanuncios-Mails enthalten oft keine verwendbaren Vorschaubilder.
+        // Diese Anzeigen werden trotzdem über Mail und Portalseite ausgewertet.
+        // Bei den übrigen Portalen bleibt „keine Bilder“ ein Retry, damit
+        // temporär fehlende oder nicht eindeutig zugeordnete Fotos nachkommen können.
+        const onlyMilanuncios = propertyIds.length > 0 &&
+          propertyIds.every(id => String(id).startsWith('milanuncios:'));
         const ready = !galleryUnavailable && propertyIds.length > 0 &&
-          (status === 'completed' || status === 'no_images');
+          (status === 'completed' || (status === 'no_images' && onlyMilanuncios));
         if (ready) status = 'ready_for_ai';
         else if (status === 'completed') status = 'retry';
         else if (status === 'no_images' || status === 'gallery_unavailable')
