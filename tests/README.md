@@ -35,5 +35,5 @@ tokens; the opening pixel and recipient name are removed. The actual photo
 redirect was verified as HTTP 302 to listing 619803957. Tests resolve the photo
 anchor with a mock and verify that all unrelated tracking links remain unvisited.
 
-See `docs/diagnostics.md` for console output, the Diagnose tab, the read-only
+See `docs/diagnostics.md` for console output, separate private JSONL files, the read-only
 audit function and the GitHub JUnit test artifact.

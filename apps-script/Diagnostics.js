@@ -1,20 +1,33 @@
 /**
- * Strukturierte Konsolenlogs und begrenztes Diagnoseblatt.
- * Keine Mailtexte, Betreffzeilen, Zugangsdaten oder URL-Querys protokollieren.
+ * Private JSONL-Datei je Lauf. Keine Logs in Anzeigen-/Diagnose-Sheets.
+ * Ein Start-Checkpoint bleibt auch bei Abbruch/Timeout erhalten.
  */
 const IMAGE_DIAGNOSTICS = {
-  sheetName: 'Diagnose', maxEvents: 250, maxRows: 5000,
-  headers: ['Zeit UTC', 'Lauf-ID', 'Stufe', 'Ebene', 'Gmail-ID',
-    'Datensatz-ID', 'Status', 'Dauer ms', 'Details JSON']
+  schemaVersion: 2, maxEvents: 1000, checkpointEvery: 25,
+  folderProperty: 'WOHNUNGSAGENT_LOG_FOLDER_ID',
+  lastFileProperty: 'WOHNUNGSAGENT_LAST_LOG_FILE_ID',
+  folderName: 'Wohnungsagent – Logs'
 };
 let imageDiagnosticRun = null;
+
+function getImageLogContext() {
+  const spreadsheetId = typeof getWohnungsagentSpreadsheetId_ === 'function'
+    ? getWohnungsagentSpreadsheetId_() : CONFIG.spreadsheetId;
+  return {
+    schema_version: IMAGE_DIAGNOSTICS.schemaVersion,
+    implementation: typeof AI_PIPELINE === 'undefined' ? 'image-import-1.x' : 'wohnungsagent-2.0',
+    spreadsheet_id: spreadsheetId
+  };
+}
 
 function beginImageDiagnostics(kind) {
   imageDiagnosticRun = {
     id: new Date().toISOString() + '_' + Math.random().toString(36).slice(2, 10),
-    started: Date.now(), events: [], dropped: 0, errors: 0, warnings: 0
+    started: Date.now(), kind: String(kind || 'manual'), context: getImageLogContext(),
+    events: [], dropped: 0, errors: 0, warnings: 0, file: null, persistedCount: 0
   };
-  logImageDiagnostic('run_start', { status: kind });
+  logImageDiagnostic('run_start', { status: imageDiagnosticRun.kind });
+  checkpointImageDiagnostics();
 }
 
 function safeImageDiagnosticValue(value) {
@@ -22,11 +35,11 @@ function safeImageDiagnosticValue(value) {
   if (Array.isArray(value)) return value.slice(0, 40).map(safeImageDiagnosticValue);
   return String(value === undefined ? '' : value)
     .replace(/https?:\/\/[^\s"'<>]+/gi, url => url.split(/[?#]/)[0])
+    .replace(/\b(?:Bearer\s+|sk-)[a-z0-9_.-]+/gi, '[REDACTED]')
     .slice(0, 1000);
 }
 
 function logImageDiagnostic(stage, detail) {
-  // Protokollfehler dürfen die Verarbeitung nicht abbrechen.
   try {
     const input = detail || {}, details = {};
     const fields = ['source_url', 'http_status', 'mime', 'bytes', 'count', 'links',
@@ -40,26 +53,67 @@ function logImageDiagnostic(stage, detail) {
       for (const char of String(input.source_url)) {
         hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619);
       }
-      details.source_key = (hash >>> 0).toString(16); // Korrelations-ID, keine URL-Query.
+      details.source_key = (hash >>> 0).toString(16);
     }
-    const event = {
-      at: new Date().toISOString(), run_id: imageDiagnosticRun ? imageDiagnosticRun.id : 'manual',
-      stage: String(stage), level: input.level || 'INFO',
-      mail_id: input.mail_id || (imageDiagnosticRun && imageDiagnosticRun.mailId) || '',
-      listing_id: input.listing_id || '',
-      status: input.status || '', duration_ms: input.duration_ms === undefined ? '' : input.duration_ms,
-      details
-    };
-    if (imageDiagnosticRun && event.level === 'ERROR') imageDiagnosticRun.errors++;
-    if (imageDiagnosticRun && event.level === 'WARN') imageDiagnosticRun.warnings++;
+    const run = imageDiagnosticRun;
+    const event = Object.assign({}, run ? run.context : getImageLogContext(), {
+      at: new Date().toISOString(), run_id: run ? run.id : 'manual',
+      stage: safeImageDiagnosticValue(stage), level: input.level || 'INFO',
+      mail_id: safeImageDiagnosticValue(input.mail_id || (run && run.mailId) || ''),
+      listing_id: safeImageDiagnosticValue(input.listing_id || ''),
+      status: safeImageDiagnosticValue(input.status || ''),
+      duration_ms: input.duration_ms === undefined ? '' : input.duration_ms, details
+    });
+    if (run && event.level === 'ERROR') run.errors++;
+    if (run && event.level === 'WARN') run.warnings++;
     console.log(JSON.stringify(event));
-    if (imageDiagnosticRun) {
-      if (imageDiagnosticRun.events.length < IMAGE_DIAGNOSTICS.maxEvents - 1)
-        imageDiagnosticRun.events.push(event);
-      else imageDiagnosticRun.dropped++;
+    if (run) {
+      if (run.events.length < IMAGE_DIAGNOSTICS.maxEvents - 1) run.events.push(event);
+      else run.dropped++;
+      if (event.level === 'ERROR' ||
+          (run.events.length > run.persistedCount &&
+            run.events.length % IMAGE_DIAGNOSTICS.checkpointEvery === 0))
+        checkpointImageDiagnostics();
     }
   } catch (error) {
-    console.warn('Diagnoseereignis konnte nicht erstellt werden');
+    console.warn('Logereignis konnte nicht erstellt werden');
+  }
+}
+
+/** Ordner neben dem tatsächlich verwendeten Sheet; ID dauerhaft merken. */
+function getImageLogFolder() {
+  const properties = PropertiesService.getScriptProperties();
+  const configured = properties.getProperty(IMAGE_DIAGNOSTICS.folderProperty);
+  if (configured) return DriveApp.getFolderById(configured);
+  const context = imageDiagnosticRun ? imageDiagnosticRun.context : getImageLogContext();
+  const parents = DriveApp.getFileById(context.spreadsheet_id).getParents();
+  if (!parents.hasNext()) throw new Error('Logordner fehlt: kein übergeordneter Sheet-Ordner');
+  const parent = parents.next(), folders = parent.getFoldersByName(IMAGE_DIAGNOSTICS.folderName);
+  const folder = folders.hasNext() ? folders.next() : parent.createFolder(IMAGE_DIAGNOSTICS.folderName);
+  properties.setProperty(IMAGE_DIAGNOSTICS.folderProperty, folder.getId());
+  return folder;
+}
+
+/** Bei Fehlern bleibt die Pipeline funktionsfähig, die Konsole enthält den Hinweis. */
+function checkpointImageDiagnostics() {
+  const run = imageDiagnosticRun;
+  if (!run || !run.events.length || run.events.length === run.persistedCount) return;
+  try {
+    const content = run.events.map(event => JSON.stringify(event)).join('\n') + '\n';
+    if (!run.file) {
+      const name = 'wohnungsagent_' + run.id.replace(/[:.]/g, '-') + '.jsonl';
+      run.file = getImageLogFolder().createFile(name, content, 'text/plain');
+      PropertiesService.getScriptProperties()
+        .setProperty(IMAGE_DIAGNOSTICS.lastFileProperty, run.file.getId());
+      console.log(JSON.stringify({
+        stage: 'log_file', run_id: run.id, file_id: run.file.getId(), url: run.file.getUrl()
+      }));
+    } else {
+      run.file.setContent(content);
+    }
+    run.persistedCount = run.events.length;
+  } catch (error) {
+    console.warn('Logdatei nicht gespeichert: ' + safeImageDiagnosticValue(error.message));
   }
 }
 
@@ -69,11 +123,11 @@ function runImageDiagnosticStage(stage, action) {
   try {
     const result = action();
     logImageDiagnostic(stage, { status: 'completed', duration_ms: Date.now() - started });
+    checkpointImageDiagnostics();
     return result;
   } catch (error) {
     logImageDiagnostic(stage, {
-      level: 'ERROR', status: 'failed', duration_ms: Date.now() - started,
-      error: error.message
+      level: 'ERROR', status: 'failed', duration_ms: Date.now() - started, error: error.message
     });
     throw error;
   }
@@ -82,39 +136,17 @@ function runImageDiagnosticStage(stage, action) {
 function finishImageDiagnostics() {
   if (!imageDiagnosticRun) return;
   const run = imageDiagnosticRun;
-  const finish = {
-    at: new Date().toISOString(), run_id: run.id, stage: 'run_end',
-    level: run.errors || run.warnings ? 'WARN' : 'INFO', mail_id: '', listing_id: '',
-    status: run.errors ? 'finished_with_errors' : run.warnings ? 'finished_with_warnings' : 'finished',
-    duration_ms: Date.now() - run.started,
-    details: { dropped: run.dropped, errors: run.errors, warnings: run.warnings }
-  };
-  console.log(JSON.stringify(finish));
-  run.events.push(finish);
   try {
-    const ss = SpreadsheetApp.openById(CONFIG.spreadsheetId);
-    let sheet = ss.getSheetByName(IMAGE_DIAGNOSTICS.sheetName);
-    if (!sheet) {
-      sheet = ss.insertSheet(IMAGE_DIAGNOSTICS.sheetName);
-      sheet.getRange(1, 1, 1, IMAGE_DIAGNOSTICS.headers.length).setValues([IMAGE_DIAGNOSTICS.headers]);
-      sheet.setFrozenRows(1);
-    }
-    const headers = sheet.getRange(1, 1, 1, IMAGE_DIAGNOSTICS.headers.length).getValues()[0];
-    if (headers.some((h, i) => h !== IMAGE_DIAGNOSTICS.headers[i]))
-      throw new Error('Diagnose-Header weichen ab; kein Schreibzugriff');
-    const rows = run.events.map(event => [
-      event.at, event.run_id, event.stage, event.level, event.mail_id,
-      event.listing_id, event.status, event.duration_ms, JSON.stringify(event.details)
-    ].map(value => typeof value === 'string' && /^[=+\-@]/.test(value) ? "'" + value : value));
-    const start = sheet.getLastRow() + 1;
-    const needed = start + rows.length - 1;
-    if (sheet.getMaxRows() < needed)
-      sheet.insertRowsAfter(sheet.getMaxRows(), needed - sheet.getMaxRows());
-    sheet.getRange(start, 1, rows.length, IMAGE_DIAGNOSTICS.headers.length).setValues(rows);
-    const excess = sheet.getLastRow() - 1 - IMAGE_DIAGNOSTICS.maxRows;
-    if (excess > 0) sheet.deleteRows(2, excess); // Nur alte Diagnosezeilen.
-  } catch (error) {
-    console.warn('Diagnoseblatt nicht geschrieben: ' + safeImageDiagnosticValue(error.message));
+    const finish = Object.assign({}, run.context, {
+      at: new Date().toISOString(), run_id: run.id, stage: 'run_end',
+      level: run.errors || run.warnings ? 'WARN' : 'INFO', mail_id: '', listing_id: '',
+      status: run.errors ? 'finished_with_errors' : run.warnings ? 'finished_with_warnings' : 'finished',
+      duration_ms: Date.now() - run.started,
+      details: { dropped: run.dropped, errors: run.errors, warnings: run.warnings }
+    });
+    console.log(JSON.stringify(finish));
+    run.events.push(finish);
+    checkpointImageDiagnostics();
   } finally {
     imageDiagnosticRun = null;
   }
