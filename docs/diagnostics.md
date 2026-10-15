@@ -6,7 +6,7 @@ Jeder Lauf schreibt eine eigene UTF-8-JSONL-Datei in Google Drive, zum Beispiel:
 
     wohnungsagent_2026-10-15T07-30-00-000Z_ab12cd34.jsonl
 
-Der Ordner **Wohnungsagent – Logs** wird neben dem tatsächlich verwendeten
+Der Ordner **Logs** wird neben dem tatsächlich verwendeten
 Spreadsheet angelegt. Seine ID wird unter der Script Property
 WOHNUNGSAGENT_LOG_FOLDER_ID gespeichert und anschließend wiederverwendet.
 Ein bereits gesetzter Ordner wird respektiert. Die zuletzt erzeugte Datei ist
@@ -26,6 +26,9 @@ Jede Ereigniszeile enthält:
 - spreadsheet_id: tatsächlich für diesen Lauf verwendetes Ziel
 - at und run_id: UTC-Zeit und gemeinsame Lauf-ID
 - stage, level, status, duration_ms
+- component: pipeline (Hauptablauf/Queue/übergreifende Stufen) oder converter
+- provider: fotocasa, idealista, yaencontre, pisos, immoscout, milanuncios;
+  mixed bei mehreren erkannten Anbietern, unknown bei noch unbekannter Zuordnung
 - mail_id und listing_id, soweit im Verarbeitungsschritt bekannt
 - begrenzte Details zu Anzahl, HTTP-Status, Bildgröße oder Fehlermeldung
 
@@ -33,11 +36,31 @@ Bei Version 2.0 wird der dortige getWohnungsagentSpreadsheetId_-Resolver benutzt
 einschließlich der optionalen WOHNUNGSAGENT_SPREADSHEET_ID-Konfiguration.
 Das Logging selbst ändert das aktive Ziel-Sheet nicht.
 
-Der zuletzt geprüfte main-Stand verwendete das ältere Sheet
-1bVko9OSTD5QtPsIuxmDDrGO-8S-L6iK0TnHPvI3HwvM. Das saubere Neustart-Sheet ist
-1_X-jdVIKwbqDABIssOOCjLC41qRqpb01paV1RtruMwg. Die 2.0-KI-Implementierung lag
-zum Zeitpunkt der Logging-Umstellung im separaten offenen Pull Request #1.
-Eine Umstellung auf diese Pipeline muss unabhängig vom Logging erfolgt sein.
+Seit ff221af verweist CONFIG auf das aktuelle Sheet
+1_X-jdVIKwbqDABIssOOCjLC41qRqpb01paV1RtruMwg. Die vollständige 2.0-KI-Pipeline
+liegt weiterhin im separaten Pull Request #1 und wird durch Logging nicht aktiviert.
+
+Schema 3 ergänzt component und provider; stage und status bleiben erhalten.
+status beschreibt das Ergebnis bzw. den Zwischenstand. provider_extract markiert
+Beginn und Abschluss der bestehenden Anbieterextraktion. Die Zuordnung folgt
+expliziten Anbieter-/Inserats-IDs, bekannten Quelldomains oder dem aktuellen
+Mail-Kontext. Dieser wird vor jeder Mail und vor den globalen Folgestufen geleert.
+Ein Download kann durch seine eigene Inserats-ID oder Quelldomain einen
+genaueren Anbieter erhalten. Es entstehen keine separaten Dateien pro Anbieter.
+Historische JSONL-Dateien bleiben unverändert im bisherigen Format lesbar.
+
+## Kompakte Drive-Ablage
+
+Hauptordner: https://drive.google.com/drive/folders/1SWvLnzbXulLr_Mvo6LdXSFCl00oSGyHf
+
+Direkt darin liegen das aktuelle Sheet, der alte Bestand, das Reset-Backup und
+das bestehende Apps-Script-Projekt. Genau zwei Unterordner enthalten die
+Immobilienbilder und Logs. Alle bisherigen Datei-/Ordner-IDs bleiben erhalten;
+Dateinamen der Bilder und historischen Protokolle wurden nicht verändert.
+Die beiden Ordner werden weiterhin über die vorhandenen Script Properties
+WOHNUNGSAGENT_IMAGE_FOLDER_ID und WOHNUNGSAGENT_LOG_FOLDER_ID angesprochen.
+Es wurden keine Immobilien gelöscht, keine Imports gestartet und keine Trigger
+geändert. Der neue Code wird vom Nutzer manuell bereitgestellt.
 
 ## Abbrüche und Fehler
 

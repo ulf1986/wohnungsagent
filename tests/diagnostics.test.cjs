@@ -24,10 +24,10 @@ function context({ configuredFolder = true } = {}) {
   };
   const parent = {
     getFoldersByName(name) {
-      assert.equal(name, 'Wohnungsagent – Logs'); parentCalls.search++;
+      assert.equal(name, 'Logs'); parentCalls.search++;
       return { hasNext: () => false };
     },
-    createFolder(name) { assert.equal(name, 'Wohnungsagent – Logs'); parentCalls.create++; return folder; }
+    createFolder(name) { assert.equal(name, 'Logs'); parentCalls.create++; return folder; }
   };
   const ctx = vm.createContext({
     console: { log: text => logs.push(text), warn: text => logs.push(text), error: text => logs.push(text) },
@@ -61,12 +61,39 @@ test('file and console logs identify implementation, target sheet and the same r
   assert.ok(files[0].content.endsWith('\n'));
   const stored = files[0].content.trim().split('\n').map(JSON.parse);
   assert.deepEqual(stored.map(e => e.stage), ['run_start', 'mail_extract', 'run_end']);
-  assert.ok(stored.every(e => e.schema_version === 2 && e.spreadsheet_id === 'sheet-current'));
+  assert.ok(stored.every(e => e.schema_version === 3 && e.spreadsheet_id === 'sheet-current'));
   assert.ok(stored.every(e => e.implementation === 'image-import-1.x'));
   assert.ok(stored.every(e => e.run_id === stored[0].run_id));
   assert.equal(stored[1].mail_id, 'gmail-123');
   assert.equal(properties.get('WOHNUNGSAGENT_LAST_LOG_FILE_ID'), files[0].getId());
   assert.ok(events(logs).some(e => e.stage === 'log_file' && e.file_id === files[0].getId()));
+});
+
+test('provider and component distinguish converters from pipeline in the same file', () => {
+  const { ctx, files } = context();
+  ctx.beginImageDiagnostics('test');
+  ctx.logImageDiagnostic('provider_extract', { observed_id: ['pisos:123', 'pisos:456'], status: 'completed' });
+  ctx.logImageDiagnostic('image_http', { source_url: 'https://img.immobilienscout24.de/photo?token=secret', status: 'received' });
+  ctx.logImageDiagnostic('provider_extract', { observed_id: ['pisos:123', 'idealista:456'], status: 'completed' });
+  ctx.finishImageDiagnostics();
+  const rows = files[0].content.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(rows.map(e => e.component), ['pipeline', 'converter', 'converter', 'converter', 'pipeline']);
+  assert.deepEqual(rows.map(e => e.provider), ['unknown', 'pisos', 'immoscout', 'mixed', 'unknown']);
+  assert.equal(files.length, 1);
+  assert.ok(!files[0].content.includes('token=secret'));
+});
+
+test('provider inference rejects foreign hosts and resets between mail contexts', () => {
+  const { ctx } = context();
+  assert.equal(ctx.getImageDiagnosticProvider({ source_url: 'https://pisos.com.evil.test/x' }), 'unknown');
+  assert.equal(ctx.getImageDiagnosticProvider({ provider: 'PRIVATE MAIL SUBJECT' }), 'unknown');
+  ctx.beginImageDiagnostics('test');
+  vm.runInContext("imageDiagnosticRun.provider = 'milanuncios'", ctx);
+  assert.equal(ctx.getImageDiagnosticProvider({ listing_id: 'mail_123' }), 'milanuncios');
+  assert.equal(ctx.getImageDiagnosticProvider({ listing_id: 'fotocasa:123' }), 'fotocasa');
+  vm.runInContext("imageDiagnosticRun.provider = ''", ctx);
+  assert.equal(ctx.getImageDiagnosticProvider({}), 'unknown');
+  ctx.finishImageDiagnostics();
 });
 
 test('V2 resolver wins over legacy fallback and is recorded without accessing sheet cells', () => {

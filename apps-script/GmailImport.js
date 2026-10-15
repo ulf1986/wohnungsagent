@@ -155,7 +155,10 @@ function runGmailImagePipeline() {
 
     for (const mail of selected) {
       const mailId = mail.getId();
-      if (imageDiagnosticRun) imageDiagnosticRun.mailId = mailId;
+      if (imageDiagnosticRun) {
+        imageDiagnosticRun.mailId = mailId;
+        imageDiagnosticRun.provider = '';
+      }
       logImageDiagnostic('mail_start', { mail_id: mailId, status: 'processing' });
       let row = existing[mailId]
         ? existing[mailId].row
@@ -170,6 +173,7 @@ function runGmailImagePipeline() {
           queue, row, 'processing', '', ''
         );
 
+        logImageDiagnostic('provider_extract', { status: 'started' });
         const milan = resolveMilanunciosMailLinks(mail.getBody() || '');
         const html = milan.html;
         const plain = mail.getPlainBody() || '';
@@ -180,6 +184,10 @@ function runGmailImagePipeline() {
 
         // Vor JEGLICHEM Download Anzeigen-IDs aus den Links bestimmen.
         const propertyIds = [...new Set(links.map(getMailListingId).filter(Boolean))];
+        if (imageDiagnosticRun) imageDiagnosticRun.provider = getImageDiagnosticProvider({ observed_id: propertyIds });
+        logImageDiagnostic('provider_extract', {
+          status: 'completed', observed_id: propertyIds, links: links.length, count: propertyIds.length
+        });
         logImageDiagnostic('mail_extract', {
           mail_id: mailId, links: links.length, count: propertyIds.length,
           observed_id: propertyIds, status: propertyIds.length ? 'identified' : 'no_listing_id'
@@ -435,7 +443,10 @@ function runGmailImagePipeline() {
     }
 
     console.log('Gmail: ' + JSON.stringify(stats));
-    if (imageDiagnosticRun) imageDiagnosticRun.mailId = '';
+    if (imageDiagnosticRun) {
+      imageDiagnosticRun.mailId = '';
+      imageDiagnosticRun.provider = '';
+    }
     logImageDiagnostic('mail_summary', {
       count: stats.processed, uploaded: stats.uploaded, errors: stats.retry,
       status: stats.retry ? 'has_retries' : 'completed'

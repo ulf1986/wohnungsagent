@@ -3,10 +3,10 @@
  * Ein Start-Checkpoint bleibt auch bei Abbruch/Timeout erhalten.
  */
 const IMAGE_DIAGNOSTICS = {
-  schemaVersion: 2, maxEvents: 1000, checkpointEvery: 25,
+  schemaVersion: 3, maxEvents: 1000, checkpointEvery: 25,
   folderProperty: 'WOHNUNGSAGENT_LOG_FOLDER_ID',
   lastFileProperty: 'WOHNUNGSAGENT_LAST_LOG_FILE_ID',
-  folderName: 'Wohnungsagent – Logs'
+  folderName: 'Logs'
 };
 let imageDiagnosticRun = null;
 
@@ -39,6 +39,26 @@ function safeImageDiagnosticValue(value) {
     .slice(0, 1000);
 }
 
+/** Nur bekannte Anbieterkennungen speichern; niemals Absender oder Mailtext. */
+function getImageDiagnosticProvider(detail) {
+  const input = detail || {}, known = ['fotocasa', 'idealista', 'yaencontre', 'pisos', 'immoscout', 'milanuncios'];
+  const names = values => [...new Set(values.map(value => String(value || '').toLowerCase().split(':')[0])
+    .filter(value => known.includes(value)))];
+  if (known.includes(input.provider)) return input.provider;
+  const ids = names([input.listing_id].concat(input.observed_id || []));
+  if (ids.length) return ids.length === 1 ? ids[0] : 'mixed';
+  const host = String(input.source_url || '').match(/^https?:\/\/([^/:?#]+)/i);
+  if (host) {
+    const domain = host[1].toLowerCase();
+    const portals = [['fotocasa', 'fotocasa.es'], ['idealista', 'idealista.com'],
+      ['yaencontre', 'yaencontre.com'], ['pisos', 'pisos.com'],
+      ['immoscout', 'immobilienscout24.de'], ['milanuncios', 'milanuncios.com']];
+    for (const [provider, suffix] of portals)
+      if (domain === suffix || domain.endsWith('.' + suffix)) return provider;
+  }
+  return imageDiagnosticRun && imageDiagnosticRun.provider || 'unknown';
+}
+
 function logImageDiagnostic(stage, detail) {
   try {
     const input = detail || {}, details = {};
@@ -59,6 +79,9 @@ function logImageDiagnostic(stage, detail) {
     const event = Object.assign({}, run ? run.context : getImageLogContext(), {
       at: new Date().toISOString(), run_id: run ? run.id : 'manual',
       stage: safeImageDiagnosticValue(stage), level: input.level || 'INFO',
+      component: /^(run_|mail_|queue_status|pipeline_error|identity_audit|listing_import|availability|previews|sort)/.test(stage)
+        ? 'pipeline' : 'converter',
+      provider: getImageDiagnosticProvider(input),
       mail_id: safeImageDiagnosticValue(input.mail_id || (run && run.mailId) || ''),
       listing_id: safeImageDiagnosticValue(input.listing_id || ''),
       status: safeImageDiagnosticValue(input.status || ''),
@@ -139,6 +162,7 @@ function finishImageDiagnostics() {
   try {
     const finish = Object.assign({}, run.context, {
       at: new Date().toISOString(), run_id: run.id, stage: 'run_end',
+      component: 'pipeline', provider: 'unknown',
       level: run.errors || run.warnings ? 'WARN' : 'INFO', mail_id: '', listing_id: '',
       status: run.errors ? 'finished_with_errors' : run.warnings ? 'finished_with_warnings' : 'finished',
       duration_ms: Date.now() - run.started,
