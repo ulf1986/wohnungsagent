@@ -18,7 +18,8 @@ const CONFIG = {
     idealista: extractIdealistaImages,
     yaencontre: extractYaencontreImages,
     pisos: extractPisosImages,
-    immoscout: extractImmoScoutImages
+    immoscout: extractImmoScoutImages,
+    milanuncios: extractMilanunciosImages
   }
 };
 
@@ -34,11 +35,13 @@ function runImageImport() {
     return;
   }
 
+  beginImageDiagnostics('listing_image_import');
   try {
     console.log(JSON.stringify(
       processExistingListingImages()
     ));
   } finally {
+    finishImageDiagnostics();
     lock.releaseLock();
   }
 }
@@ -441,6 +444,7 @@ function normalizeProvider(value) {
   if (name.includes('idealista')) return 'idealista';
   if (name.includes('yaencontre')) return 'yaencontre';
   if (name.includes('pisos')) return 'pisos';
+  if (name.includes('milanuncios')) return 'milanuncios';
   if (name.includes('immoscout') || name.includes('immobilienscout') ||
       name.includes('immobilien scout')) return 'immoscout';
 
@@ -546,7 +550,10 @@ function updateImageImportJson(
     sheet, idCol, listingId
   );
 
-  if (!current) return null;
+  if (!current) {
+    logImageDiagnostic('listing_write', { listing_id: listingId, status: 'missing_listing' });
+    return null;
+  }
 
   if (current.values[deleteCol] === true) {
     return null;
@@ -565,7 +572,23 @@ function updateImageImportJson(
     ).getValue()
   ).trim();
 
-  if (currentId !== listingId) return null;
+  if (currentId !== listingId) {
+    logImageDiagnostic('listing_write', {
+      listing_id: listingId, level: 'WARN', status: 'row_identity_changed',
+      row: current.rowNumber, expected_id: listingId, observed_id: currentId
+    });
+    return null;
+  }
+  const mailCol = sheet.getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0].indexOf('E-Mail-ID');
+  if (mailCol >= 0 && updated.source_email_id &&
+      String(current.values[mailCol] || '') !== String(updated.source_email_id)) {
+    logImageDiagnostic('listing_write', {
+      listing_id: listingId, level: 'WARN', status: 'source_email_mismatch',
+      row: current.rowNumber, expected_email_id: current.values[mailCol],
+      observed_email_id: updated.source_email_id
+    });
+  }
 
   sheet.getRange(
     current.rowNumber, jsonCol + 1
@@ -573,6 +596,7 @@ function updateImageImportJson(
 
   SpreadsheetApp.flush();
 
+  logImageDiagnostic('listing_write', { listing_id: listingId, row: current.rowNumber, status: 'written' });
   return updated;
 }
 

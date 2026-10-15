@@ -48,6 +48,7 @@ function runGmailImagePipeline() {
     return;
   }
 
+  beginImageDiagnostics('gmail_pipeline');
   try {
     const ss = SpreadsheetApp.openById(
       CONFIG.spreadsheetId
@@ -137,6 +138,9 @@ function runGmailImagePipeline() {
     const selected = candidates.slice(
       0, MAIL_IMPORT.maxMessagesPerRun
     );
+    logImageDiagnostic('mail_scan', {
+      status: 'selected', count: candidates.length, files: selected.length
+    });
 
     const stats = {
       candidates: candidates.length,
@@ -151,6 +155,8 @@ function runGmailImagePipeline() {
 
     for (const mail of selected) {
       const mailId = mail.getId();
+      if (imageDiagnosticRun) imageDiagnosticRun.mailId = mailId;
+      logImageDiagnostic('mail_start', { mail_id: mailId, status: 'processing' });
       let row = existing[mailId]
         ? existing[mailId].row
         : null;
@@ -164,7 +170,8 @@ function runGmailImagePipeline() {
           queue, row, 'processing', '', ''
         );
 
-        const html = mail.getBody() || '';
+        const milan = resolveMilanunciosMailLinks(mail.getBody() || '');
+        const html = milan.html;
         const plain = mail.getPlainBody() || '';
 
         const links = extractPropertyLinks(
@@ -173,6 +180,10 @@ function runGmailImagePipeline() {
 
         // Vor JEGLICHEM Download Anzeigen-IDs aus den Links bestimmen.
         const propertyIds = [...new Set(links.map(getMailListingId).filter(Boolean))];
+        logImageDiagnostic('mail_extract', {
+          mail_id: mailId, links: links.length, count: propertyIds.length,
+          observed_id: propertyIds, status: propertyIds.length ? 'identified' : 'no_listing_id'
+        });
         const blockedInMail = propertyIds.filter(id => blockedIds.has(id));
         if (blockedInMail.length) {
           const allBlocked = blockedInMail.length === propertyIds.length;
@@ -192,14 +203,16 @@ function runGmailImagePipeline() {
           extractPropertyImageUrls(html);
         const linkedImages = [
           ...extractPisosMailImages(html),
-          ...extractImmoScoutMailImages(html)
+          ...extractImmoScoutMailImages(html),
+          ...extractMilanunciosMailImages(html)
         ];
 
         const oldFiles = parseMailQueueFiles(
           queue.getRange(row, 14).getValue()
         ).filter(file => isPropertyImageUrl(file.source_url) &&
           (!(isPisosPropertyImageUrl(file.source_url) ||
-              isImmoScoutPropertyImageUrl(file.source_url)) ||
+              isImmoScoutPropertyImageUrl(file.source_url) ||
+              isMilanunciosPropertyImageUrl(file.source_url)) ||
             linkedImages.some(image => image.source_url === file.source_url)));
 
         const allFiles = [...oldFiles];
@@ -208,7 +221,11 @@ function runGmailImagePipeline() {
         );
 
         let uploaded = 0;
-        const errors = [];
+        const errors = [...milan.errors];
+        logImageDiagnostic('mail_images', {
+          images: mailImageUrls.length, files: oldFiles.length, links: linkedImages.length,
+          status: mailImageUrls.length ? 'found' : 'no_property_images'
+        });
         let galleryUnavailable = false;
 
         const imageUrls = [...mailImageUrls];
@@ -306,7 +323,8 @@ function runGmailImagePipeline() {
         // Verlinkte Fotos nur freigeben, wenn ihr Link eine eindeutige ID liefert.
         for (const file of allFiles) {
           if (!isPisosPropertyImageUrl(file.source_url) &&
-              !isImmoScoutPropertyImageUrl(file.source_url)) continue;
+              !isImmoScoutPropertyImageUrl(file.source_url) &&
+              !isMilanunciosPropertyImageUrl(file.source_url)) continue;
           const owners = [...new Set(linkedImages
             .filter(image => image.source_url === file.source_url)
             .map(image => image.listing_id))];
@@ -400,6 +418,7 @@ function runGmailImagePipeline() {
         );
 
       } catch (error) {
+        logImageDiagnostic('mail_error', { mail_id: mailId, level: 'ERROR', status: 'retry', error: error.message });
         stats.retry++;
 
         console.error(
@@ -416,10 +435,20 @@ function runGmailImagePipeline() {
     }
 
     console.log('Gmail: ' + JSON.stringify(stats));
+    if (imageDiagnosticRun) imageDiagnosticRun.mailId = '';
+    logImageDiagnostic('mail_summary', {
+      count: stats.processed, uploaded: stats.uploaded, errors: stats.retry,
+      status: stats.retry ? 'has_retries' : 'completed'
+    });
+    try {
+      runImageDiagnosticStage('identity_audit', () => auditListingImageAssignments(ss));
+    } catch (error) {
+      console.error('Identitätsprüfung: ' + error.message);
+    }
 
 // 1. Bestehende Anzeigen und Galerien aktualisieren.
 try {
-  const imageStats = processExistingListingImages();
+  const imageStats = runImageDiagnosticStage('listing_import', () => processExistingListingImages());
 
   console.log(
         'Bestehende Anzeigen: ' +
@@ -435,7 +464,7 @@ try {
     // Original-Bildquellen auch bei bereits importierten Anzeigen prüfen.
     // Nur wiederholt bestätigte HTTP 404/410 führen zur Sperrung.
     try {
-      checkListingImageAvailabilityInternal();
+      runImageDiagnosticStage('availability', () => checkListingImageAvailabilityInternal());
     } catch (error) {
       console.error('Fehler bei der Bild-Verfügbarkeitsprüfung: ' + error.message);
     }
@@ -443,7 +472,7 @@ try {
     // 3. Ein Zellvorschaubild pro Anzeige und KI-Status aktualisieren.
     // und die sichtbaren KI-Statuswerte aktualisieren.
     try {
-      updateListingPreviewsInternal();
+      runImageDiagnosticStage('previews', () => updateListingPreviewsInternal());
 
       console.log(
         'Vorschaubilder und KI-Status aktualisiert.'
@@ -456,11 +485,15 @@ try {
     }
     // Anzeigen immer nach ursprünglichem E-Mail-Eingang sortieren.
     try {
-      sortListingsByMailReceived(ss);
+      runImageDiagnosticStage('sort', () => sortListingsByMailReceived(ss));
     } catch (error) {
       console.error('Sortierung nach E-Mail-Eingang: ' + error.message);
     }
+  } catch (error) {
+    logImageDiagnostic('pipeline_error', { level: 'ERROR', status: 'failed', error: error.message });
+    throw error;
   } finally {
+    finishImageDiagnostics();
     lock.releaseLock();
   }
 }
@@ -621,6 +654,9 @@ function createMailQueueRow(sheet, mail) {
 function setMailQueueStatus(
   sheet, row, status, error, readyAt
 ) {
+  logImageDiagnostic('queue_status', {
+    row, status, error: error || '', level: status === 'retry' ? 'WARN' : 'INFO'
+  });
   const now = new Date().toISOString();
 
   const detail = (
@@ -691,13 +727,22 @@ function extractPropertyLinks(html, plain) {
       'yaencontre.com',
       'pisos.com',
       'immobilienscout24.de',
-      'push.search.is24.de'
+      'push.search.is24.de',
+      'milanuncios.com'
     ].some(domain =>
       host === domain ||
       host.endsWith('.' + domain)
     );
 
     if (!allowed) continue;
+    // Stylesheets und verlinkte Layoutbilder sind keine Inseratslinks.
+    if (/\.(?:png|jpg|jpeg|gif|webp|css)(?:[?#]|$)/i.test(url)) continue;
+
+    if (host === 'milanuncios.com' || host.endsWith('.milanuncios.com')) {
+      const listing = getMilanunciosListing(url);
+      if (listing) result.add(listing.url);
+      continue;
+    }
 
     if (host === 'immobilienscout24.de' || host.endsWith('.immobilienscout24.de') ||
         host === 'push.search.is24.de') {
@@ -740,7 +785,8 @@ function extractIdealistaListingId(url) {
  * Bild-URLs aus dem E-Mail-HTML.
  */
 function isPropertyImageUrl(url) {
-  if (isPisosPropertyImageUrl(url) || isImmoScoutPropertyImageUrl(url)) return true;
+  if (isPisosPropertyImageUrl(url) || isImmoScoutPropertyImageUrl(url) ||
+      isMilanunciosPropertyImageUrl(url)) return true;
   const match = String(url || '').match(/^https:\/\/([^\/?#]+)(\/[^?#]*)/i);
   if (!match) return false;
   const host = match[1].toLowerCase(), path = match[2].toLowerCase();
@@ -796,7 +842,8 @@ function extractPropertyImageUrls(html) {
 
   // Fotos dieser Portale benötigen den Inseratslink im umschließenden Bildblock.
   for (const image of [
-    ...extractPisosMailImages(html), ...extractImmoScoutMailImages(html)
+    ...extractPisosMailImages(html), ...extractImmoScoutMailImages(html),
+    ...extractMilanunciosMailImages(html)
   ]) {
     result.add(image.source_url);
   }
@@ -836,6 +883,8 @@ function readMailImageBlacklist(ss) {
 
 /** Portal und Datensatz-ID nur aus eindeutig erkennbaren Anzeigenlinks. */
 function getMailListingId(url) {
+  const milan = getMilanunciosListing(url);
+  if (milan) return milan.listing_id;
   const immoscout = getImmoScoutListing(url);
   if (immoscout) return immoscout.listing_id;
   const pisos = getPisosListing(url);

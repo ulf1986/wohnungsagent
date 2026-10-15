@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const root = path.join(__dirname, '..');
 function context() {
   const ctx = vm.createContext({ console: { log() {}, warn() {}, error() {} } });
-  for (const name of ['Drive', 'Pisos', 'ImmoScout', 'GmailImport']) {
+  for (const name of ['Drive', 'Pisos', 'ImmoScout', 'Milanuncios', 'Diagnostics', 'GmailImport']) {
     vm.runInContext(fs.readFileSync(path.join(root, 'apps-script', name + '.js'), 'utf8'), ctx);
   }
   return ctx;
@@ -108,7 +108,7 @@ test('photo attributes and encoded paths accepted only inside the listing anchor
 });
 
 // Exercise the real queue pipeline, stubbing only Google I/O and unrelated jobs.
-function runQueue(html, { blocked = [], oldFiles = [], failDownload = false } = {}) {
+function runQueue(html, { blocked = [], oldFiles = [], failDownload = false, fetch = null } = {}) {
   const ctx = context(), writes = new Map();
   let downloads = 0;
   const sheet = {
@@ -124,6 +124,7 @@ function runQueue(html, { blocked = [], oldFiles = [], failDownload = false } = 
     getBody: () => html, getPlainBody: () => '', getSubject: () => 'Pisos alert'
   };
   Object.assign(ctx, {
+    UrlFetchApp: { fetch: fetch || (() => { throw new Error('Unexpected network access'); }) },
     CONFIG: { spreadsheetId: 'test', sheetName: 'Anzeigen' },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     SpreadsheetApp: { openById: () => ({ getSheetByName: () => sheet }), flush() {} },
@@ -357,4 +358,90 @@ test('Main registers ImmoScout for existing-listing imports and portal-name alia
     assert.equal(ctx.normalizeProvider(name), 'immoscout');
   }
   assert.equal(vm.runInContext('CONFIG.providers.immoscout === extractImmoScoutImages', ctx), true);
+});
+
+const milanId = '1a13b58f7993b3f6';
+const milanTarget = 'https://www.milanuncios.com/ads/malaga-capital-619803957.htm';
+const milanPhoto = 'https://images-re.milanuncios.com/images/ads/cc274bf1-9612-46a5-aa76-48d34bca9598?rule=hw1200';
+function redirectTo(target, status = 302) {
+  return { getResponseCode: () => status, getAllHeaders: () => ({ Location: target }) };
+}
+
+test('Milanuncios original layout resolves only the photo anchor and pairs its ID', () => {
+  const ctx = context(), calls = [];
+  ctx.UrlFetchApp = { fetch: (url, options) => {
+    calls.push(url);
+    assert.equal(options.followRedirects, false);
+    return redirectTo(milanTarget + '?utm_source=alert');
+  } };
+  const result = ctx.resolveMilanunciosMailLinks(fixture(milanId));
+  assert.equal(result.errors.length, 0);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /fixture_/);
+  assert.deepEqual(plain(ctx.extractPropertyLinks(result.html, '')), [milanTarget]);
+  assert.deepEqual(plain(ctx.extractMilanunciosMailImages(result.html)), [{
+    listing_id: 'milanuncios:619803957', listing_url: milanTarget, source_url: milanPhoto
+  }]);
+  assert.deepEqual(plain(ctx.extractPropertyImageUrls(result.html)), [milanPhoto]);
+});
+
+test('Milanuncios queue ready after resolution; blacklist stops image download', () => {
+  const fetch = () => redirectTo(milanTarget);
+  let result = runQueue(fixture(milanId), { fetch });
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.equal(result.downloads, 1);
+  assert.equal(result.files[0].listing_id, 'milanuncios:619803957');
+  result = runQueue(fixture(milanId), { fetch, blocked: ['milanuncios:619803957'] });
+  assert.equal(result.status[0], 'blocked');
+  assert.equal(result.downloads, 0);
+});
+
+test('Milanuncios failed, looping and foreign redirects remain retry without fetching targets', () => {
+  for (const [target, status] of [
+    ['https://evil.test/ads/example-123.htm', 302],
+    ['https://www.milanuncios.com/mis-alertas/eliminar', 302],
+    ['https://www.milanuncios.com/', 403]
+  ]) {
+    let calls = 0;
+    const fetch = () => { calls++; return redirectTo(target, status); };
+    const result = runQueue(fixture(milanId), { fetch });
+    assert.equal(result.status[0], 'retry');
+    assert.equal(result.downloads, 0);
+    assert.equal(calls, 1);
+  }
+  const ctx = context(); let loops = 0;
+  ctx.UrlFetchApp = { fetch: () => { loops++; return redirectTo('http://sgt.milanuncios.com/ls/click?upn=loop'); } };
+  const result = ctx.resolveMilanunciosMailLinks(fixture(milanId));
+  assert.equal(loops, 3);
+  assert.equal(result.errors.length, 1);
+});
+
+test('Milanuncios enforces card request limit and reports unresolved cards', () => {
+  const ctx = context(); let calls = 0;
+  ctx.UrlFetchApp = { fetch: () => { calls++; return redirectTo(milanTarget); } };
+  const html = Array.from({ length: 10 }, (_, i) =>
+    '<a href="http://sgt.milanuncios.com/ls/click?upn=' + i + '"><img src="' + milanPhoto + '"></a>').join('');
+  const result = ctx.resolveMilanunciosMailLinks(html);
+  assert.equal(calls, 8);
+  assert.equal(result.errors.length, 2);
+  assert.match(result.errors[0], /Kartenlimit/);
+});
+
+test('Milanuncios unlinked photos, tracking pixels, logos and spoof hosts excluded', () => {
+  const ctx = context();
+  for (const url of [
+    'https://www.milanuncios.com/', 'https://www.milanuncios.com/mis-alertas/',
+    'https://evil.milanuncios.com/ads/malaga-123.htm',
+    'https://www.milanuncios.com.evil.test/ads/malaga-123.htm'
+  ]) assert.equal(ctx.getMailListingId(url), '');
+  assert.equal(ctx.getMailListingId(milanTarget + '?utm_source=email'), 'milanuncios:619803957');
+  assert.equal(ctx.getMailListingId('https://www.milanuncios.com/alquiler-de-pisos/malaga-123.htm'), 'milanuncios:123');
+  assert.deepEqual(plain(ctx.extractPropertyImageUrls('<img src="' + milanPhoto + '">')), []);
+  for (const url of [
+    'http://sgt.milanuncios.com/wf/open?upn=token',
+    'https://cdn.braze.eu/appboy/logo.png',
+    'https://images-re.milanuncios.com.evil.test/images/ads/photo',
+    'https://images-re.milanuncios.com/images/logo'
+  ]) assert.equal(ctx.isPropertyImageUrl(url), false);
+  assert.deepEqual(plain(ctx.extractMilanunciosImages({ bild_urls: [milanPhoto, milanPhoto] })), [milanPhoto]);
 });

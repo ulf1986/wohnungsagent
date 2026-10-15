@@ -71,6 +71,9 @@ function saveListingImages(folder, listingId, urls, existing) {
         );
 
         if (!file.isTrashed()) {
+          logImageDiagnostic('image_download', {
+            listing_id: listingId, source_url: url, status: 'reused'
+          });
           files.push(
             buildImageFileReference(file, url)
           );
@@ -96,6 +99,11 @@ function saveListingImages(folder, listingId, urls, existing) {
       });
 
       const status = response.getResponseCode();
+      logImageDiagnostic('image_http', {
+        listing_id: listingId, source_url: url, http_status: status,
+        status: status === 200 ? 'received' : 'failed',
+        level: status === 200 ? 'INFO' : 'WARN'
+      });
 
       if (status !== 200) {
         throw new Error('HTTP ' + status);
@@ -123,6 +131,9 @@ function saveListingImages(folder, listingId, urls, existing) {
       }
 
       const sizeBytes = blob.getBytes().length;
+      logImageDiagnostic('image_content', {
+        listing_id: listingId, source_url: url, mime, bytes: sizeBytes, status: 'validated_type'
+      });
 
       if (sizeBytes < 2000) {
         throw new Error(
@@ -205,8 +216,15 @@ function saveListingImages(folder, listingId, urls, existing) {
       files.push(
         buildImageFileReference(file, url)
       );
+      logImageDiagnostic('image_download', {
+        listing_id: listingId, source_url: url, status: 'saved', bytes: sizeBytes
+      });
 
     } catch (error) {
+      logImageDiagnostic('image_download', {
+        listing_id: listingId, source_url: url, level: 'WARN', status: 'retry',
+        error: error.message
+      });
       const message =
         listingId + ' Bild ' + (index + 1) +
         ': ' + error.message;
@@ -368,3 +386,4 @@ function extractHtmlImageUrls(html) {
 
   return uniqueImageUrls(urls);
 }
+

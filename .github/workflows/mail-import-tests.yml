@@ -1,0 +1,40 @@
+name: Mail importer regression tests
+
+on:
+  push:
+    paths:
+      - 'apps-script/**'
+      - 'tests/**'
+      - '.github/workflows/mail-import-tests.yml'
+  pull_request:
+    paths:
+      - 'apps-script/**'
+      - 'tests/**'
+      - '.github/workflows/mail-import-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax and regression tests
+        run: |
+          set -euo pipefail
+          for file in apps-script/*.js; do node --check "$file"; done
+          mkdir -p test-results
+          node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/results.xml tests/*.test.cjs
+      - name: Save test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mail-importer-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

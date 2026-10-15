@@ -54,6 +54,11 @@ function checkListingImageAvailabilityInternal() {
     const previousMissing=previous.state==='all_images_missing' &&
       previous.checked_count===urls.length;
     const attempts=allMissing?(previousMissing?(Number(previous.confirmations)||1)+1:1):0;
+    logImageDiagnostic('availability_result', {
+      listing_id: id, row: i + 2, images: details.length,
+      status: allMissing ? 'all_images_missing' :
+        details.some(x => x.status === 200 && x.bytes > 0) ? 'images_accessible' : 'not_verifiable'
+    });
     payload.availability_check={
       method:'original_image_http',state:allMissing?'all_images_missing':
         details.some(x=>x.status===200&&x.bytes>0)?'images_accessible':'not_verifiable',
@@ -82,3 +87,4 @@ function checkListingImageAvailabilityInternal() {
     checked,unavailable,uncertain,removed:deletion.length
   }));
 }
+
