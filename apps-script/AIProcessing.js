@@ -133,10 +133,26 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     const cols = getListingColumns_(sheet);
     const blocked = isListingBlacklisted_(ss, listingId);
     if (blocked) {
+      // Nach unterbrochener Bereinigung nur bereits als entfernt bestätigte Zeilen entfernen.
+      const oldRow=findListingRow_(sheet,cols,listingId,listingUrl);
+      if(oldRow) {
+        const oldData=parseAiListingJson_(sheet.getRange(oldRow,cols['Bildanalyse JSON']+1).getValue());
+        if(oldData.ai_pipeline && oldData.ai_pipeline.page_check && oldData.ai_pipeline.page_check.status==='unavailable')
+          blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,oldData.ai_pipeline.page_check.reason);
+      }
       setAiQueueState_(queue, rowNo, index, 'blocked', 'Datensatz-ID steht in der Sperrliste.', '');
       return { status: 'blocked', listingId };
     }
     const existingRow = findListingRow_(sheet, cols, listingId, listingUrl);
+    let preflightPage;
+    if (!existingRow) {
+      try { preflightPage=fetchListingPageForProvider_(listingUrl); }
+      catch(error) { preflightPage={status:'fetch_error',error:String(error.message || error)}; }
+      if (preflightPage.status === 'unavailable') {
+        blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,preflightPage.error);
+        return {status:'unavailable',listingId};
+      }
+    }
     const listingRow = existingRow || appendListingRow_(sheet, cols, listingId, mailId, listingUrl, subject, q, qi, queueFiles);
     if (existingRow && !sheet.getRange(listingRow, cols['Datensatz-ID'] + 1).getValue()) {
       setListingValue_(sheet, listingRow, cols, 'Datensatz-ID', listingId);
@@ -148,11 +164,15 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     data.source_email_id = data.source_email_id || mailId;
     data.analyzed_file_ids = Array.isArray(data.analyzed_file_ids) ? data.analyzed_file_ids : [];
     data.image_reviews = Array.isArray(data.image_reviews) ? data.image_reviews : [];
+    if (data.ai_pipeline.page_check && data.ai_pipeline.page_check.status === 'unavailable') {
+      blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,data.ai_pipeline.page_check.reason);
+      return {status:'unavailable',listingId};
+    }
 
     if (!data.ai_pipeline.email_fields) {
       // Seite vor der gemeinsamen Extraktion abrufen; Ausfall blockiert die Mail nicht.
       let page;
-      try { page = fetchListingPageForProvider_(listingUrl); }
+      try { page = preflightPage || fetchListingPageForProvider_(listingUrl); }
       catch (error) { page = { status: 'fetch_error', error: String(error.message || error) }; }
       const emailResult = callListingExtraction_(config, 'email_and_page', subject, body, listingUrl,
         page.status === 'ok' ? page.text : '', null);
@@ -179,7 +199,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       applyListingPresentation_(sheet, listingRow, cols, checked.fields, listingUrl, data);
       writeListingJson_(sheet, listingRow, cols, data);
       if (checked.pageCheck.status === 'unavailable') {
-        finalizeAiListing_(sheet, listingRow, cols, data, checked.emailFields);
+        blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,checked.pageCheck.reason);
         return {status:'unavailable',listingId};
       }
       setAiQueueState_(queue, rowNo, index, 'pending', '', '');
@@ -217,7 +237,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       data.ai_pipeline.updated_at = new Date().toISOString();
       writeListingJson_(sheet, listingRow, cols, data);
       if (data.ai_pipeline.page_check.status === 'unavailable') {
-        finalizeAiListing_(sheet,listingRow,cols,data,emailFields);
+        blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,data.ai_pipeline.page_check.reason);
         return {status:'unavailable',listingId};
       }
       setAiQueueState_(queue, rowNo, index, 'pending', page.error || '', '');
@@ -404,6 +424,7 @@ function callListingExtraction_(config, source, subject, emailText, url, pageTex
       required:['value','source','quote']}};
   }
   schema.properties.fields.required = Object.keys(fieldTypes);
+  system += ' Alle frei formulierten Ergebniswerte immer auf Deutsch: Titel, Mietart, Stadtviertelbeschreibung, Ausstattung, Einschränkungen und Begründungen. Eigennamen, Adressen, Kontaktangaben und wörtliche quote-Belege im Original belassen. JSON-Feldnamen, Feld-IDs, Status- und Quellen-Enums unverändert lassen. Zitate niemals übersetzen, da der Code sie im Originaltext prüft.';
   system += ' Jedes Feld ist jetzt eine Liste von belegten Kandidaten mit value, source (email oder listing_page) und quote. Liefere höchstens einen Kandidaten je Quelle, bei unbekannten Werten []. quote muss ein kurzes zusammenhängendes wörtliches Zitat aus genau der angegebenen Quelle sein, das den Wert belegt; keine Paraphrase, keine Auslassungspunkte, keine Quellenpräfixe. Bei Konflikten beide Quellwerte separat liefern, nicht zusammenführen. Mailfakten nur aus subject/email_text; Seitenfakten nur aus page_text. Keine gemeinsame Belegliste. Kein Raten.';
   const sourceText = cleanAiText_(source === 'email' || combined ? emailText : pageText,
     source === 'email' || combined ? AI_PIPELINE.maxMailTextChars : AI_PIPELINE.maxPageTextChars);
@@ -495,7 +516,7 @@ function callImageReview_(config, batch, previousReviews) {
     images: { type: 'array', items: itemSchema }, summary: { type: 'string' }
   }, required: ['images','summary'] };
   const prompt = 'Bewerte ausschließlich die tatsächlich angehängten Wohnungsfotos. Für jedes Foto sind brightness, space, furniture_condition und care_renovation ganze Zahlen von 0 bis 5. Helligkeit berücksichtigt Fenster/Tageslicht. space bewertet breit/offen gegenüber tunnelartig. furniture_condition bewertet sichtbare Möbel; bei unmöblierter Wohnung bewerte stattdessen Zustand der sichtbaren Einbauten, ohne Leere automatisch abzuwerten. care_renovation bewertet Pflege und Renovierungsbedarf. Berücksichtige sichtbares Grün/Ausblick und Küchenfarbe/-alter in den Beschreibungen. Markiere Weitwinkel oder künstliche Aufhellung als Unsicherheit. Keine Ausstattung behaupten, die nicht sichtbar ist. Schreibe eine knappe deutsche Zusammenfassung nur der Bildbewertung. Frühere Bildbeobachtungen als Kontext: ' + JSON.stringify(previousReviews.map(x => ({ brightness:x.brightness,space:x.space,furniture_condition:x.furniture_condition,care_renovation:x.care_renovation,greenery_view:x.greenery_view,kitchen:x.kitchen,room_shape:x.room_shape,evidence:x.evidence }))) + '. Gib für jedes aktuelle Bild genau einen Eintrag mit dessen Index aus.';
-  const content = [{ type: 'input_text', text: prompt }];
+  const content = [{ type: 'input_text', text: 'Alle frei formulierten Ausgaben einschließlich Bildbeschreibungen, Belegen und Zusammenfassung immer auf Deutsch. JSON-Feldnamen unverändert lassen. ' + prompt }];
   for (let i = 0; i < batch.length; i++) {
     const blob = DriveApp.getFileById(batch[i].file_id).getBlob();
     const mime = String(blob.getContentType() || 'image/jpeg').split(';')[0];
@@ -835,6 +856,24 @@ function getWohnungsagentSpreadsheetId_() {
   return CONFIG.spreadsheetId;
 }
 function isListingBlacklisted_(ss,id) { return readMailImageBlacklist(ss).has(String(id).trim().toLowerCase()); }
+function blacklistUnavailableListing_(ss,sheet,cols,id,url,reason) {
+  const blacklist=ss.getSheetByName('Sperrliste');
+  if(!blacklist)throw new Error('Sperrliste fehlt; Anzeigenzeile bleibt erhalten.');
+  if(!isListingBlacklisted_(ss,id)) {
+    const next=blacklist.getLastRow()+1;
+    blacklist.getRange(next,1,1,3).setValues([[id,url,'Nicht mehr online verfügbar: '+String(reason || 'Entfernte Anzeige').slice(0,350)]]);
+    SpreadsheetApp.flush();
+    const saved=blacklist.getRange(next,1,1,3).getValues()[0];
+    if(saved[0]!==id || saved[1]!==url)throw new Error('Sperrliste nicht bestätigt; Anzeigenzeile bleibt erhalten.');
+  }
+  const row=findListingRow_(sheet,cols,id,url);
+  if(row) {
+    sheet.getRange(row,1,1,sheet.getLastColumn()).clearContent();
+    setListingValue_(sheet,row,cols,'Gesehen',false);
+    setListingValue_(sheet,row,cols,'Zu löschen',false);
+  }
+  logImageDiagnostic('listing_blacklisted',{listing_id:id,status:'unavailable',error:reason || ''});
+}
 function findDriveListingFiles_(listingId,mailId) {
   const root=getImageFolder(), prefixes=[String(listingId).toLowerCase().replace(/[^a-z0-9_-]+/g,'_')+'_','mail_'+mailId+'_'];
   const out=[]; const walk=folder=>{ const files=folder.getFiles(); while(files.hasNext()){const f=files.next();const n=f.getName();if(prefixes.some(p=>n.toLowerCase().startsWith(p)))out.push({file_id:f.getId(),name:n,drive_url:f.getUrl()});} const dirs=folder.getFolders();while(dirs.hasNext())walk(dirs.next());}; walk(root); return out;

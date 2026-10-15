@@ -13,7 +13,7 @@ class Sheet {
   getRange(r,c,n=1,m=1) {
     const get = () => Array.from({length:n}, (_,i) => Array.from({length:m}, (_,j) => this.rows[r+i-1]?.[c+j-1] ?? ''));
     const set = values => { values.forEach((row,i) => { this.rows[r+i-1] ||= []; row.forEach((v,j) => this.rows[r+i-1][c+j-1] = v); }); };
-    return { getValues:get, getValue:()=>get()[0][0], setValues:set, setValue:v=>set([[v]]), clearContent:()=>set([['']]) };
+    return { getValues:get, getValue:()=>get()[0][0], setValues:set, setValue:v=>set([[v]]), clearContent:()=>set(Array.from({length:n},()=>Array(m).fill(''))) };
   }
 }
 const headers = ['Gesehen','Zu löschen','Punkte','E-Mail-Eingang','Vorschaubild','Titel','Fläche','Miete','Zusammenfassung',
@@ -105,14 +105,37 @@ test('page fetch exception still permits combined extraction from mail',()=>{
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
 });
 
-test('deleted listing retains mail data and completes queue without image API calls',()=>{
+test('deleted new listing is blacklisted before any row or AI call',()=>{
   const x=setup();x.ctx.fetchListingPageForProvider_=()=>({status:'unavailable',httpStatus:404,error:'HTTP 404'});
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'unavailable');
-  assert.equal(x.value(x.listing,'Status'),'Nicht mehr verfügbar');
+  assert.equal(x.value(x.listing,'Datensatz-ID'),undefined);
   assert.equal(x.value(x.queue,'KI Verarbeitungsstatus'),'completed');
-  assert.equal(x.value(x.listing,'Titel'),'Wohnung aus E-Mail');
-  assert.ok(!x.calls.includes('images'));
+  assert.equal(x.value(x.blacklist,'Sperrliste Datensatz-ID'),'idealista:123');
+  assert.deepEqual(x.calls,[]);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
+});
+
+test('existing unavailable row is cleared only after confirmed blacklist write',()=>{
+  const x=setup();x.ctx.processNextAiListing(x.ss);
+  const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  data.ai_pipeline.page_check={status:'unavailable',reason:'Anuncio no disponible'};
+  x.listing.rows[1][headers.indexOf('Bildanalyse JSON')]=JSON.stringify(data);
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'unavailable');
+  assert.equal(x.value(x.listing,'Datensatz-ID'),'');
+  assert.equal(x.value(x.listing,'Gesehen'),false);
+  assert.equal(x.value(x.blacklist,'Sperrliste Datensatz-ID'),'idealista:123');
+  assert.equal(x.blacklist.rows.length,2);
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
+});
+test('failed blacklist write retains existing listing and queues a retry',()=>{
+  const x=setup();x.ctx.processNextAiListing(x.ss);
+  const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  data.ai_pipeline.page_check={status:'unavailable',reason:'HTTP 404'};
+  x.listing.rows[1][headers.indexOf('Bildanalyse JSON')]=JSON.stringify(data);
+  const range=x.blacklist.getRange.bind(x.blacklist);
+  x.blacklist.getRange=(...args)=>({...range(...args),setValues(){throw new Error('write failed');}});
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'retry');
+  assert.equal(x.value(x.listing,'Datensatz-ID'),'idealista:123');
 });
 test('confirmed page supplements mail and remains separated in stored result',()=>{
   const x=setup();

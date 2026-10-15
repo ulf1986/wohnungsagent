@@ -31,6 +31,8 @@ test('combined text uses one request with separate clean bounded sources and ful
   assert.deepEqual(Array.from(request.text.format.schema.properties.fields.properties.rent_eur.items.required),['value','source','quote']);
   assert.deepEqual(Array.from(request.text.format.schema.properties.page_check.properties.status.enum),['matched','unavailable','unclear']);
   assert.match(request.input[0].content[0].text,/Widersprüchen/);
+  assert.match(request.input[0].content[0].text,/Ergebniswerte immer auf Deutsch/);
+  assert.match(request.input[0].content[0].text,/Zitate niemals übersetzen/);
 });
 test('combined text can extract from page alone and skips API only if both sources empty',()=>{
   const x=setup();
@@ -100,6 +102,7 @@ test('stored originals are base64 encoded byte-for-byte without resize; changed 
   const selected=x.ctx.selectAiListingImages_({ai_pipeline:{},drive_files:[f],analyzed_file_ids:[],image_reviews:[]});
   x.ctx.callImageReview_({model:'configured-model'},selected,[]);
   const image=x.requests[0].input[0].content.find(c=>c.type==='input_image');
+  assert.match(x.requests[0].input[0].content[0].text,/einschließlich Bildbeschreibungen, Belegen und Zusammenfassung immer auf Deutsch/);
   assert.deepEqual(Buffer.from(image.image_url.split(',')[1],'base64'),Buffer.from(x.files.get('photo').bytes));
   assert.equal(image.detail,'high');assert.equal(x.requests[0].store,false);
   x.files.get('photo').bytes[4]=99;

@@ -37,11 +37,27 @@ Seitentitel/Überschriften bedeuten nicht verfügbar. Zugriffssperren, CAPTCHA,
 unbekannte Weiterleitungen und leere Inhalte bleiben ungeklärt. Die Regeln sind
 konservativ und erheben keinen Anspruch auf vollständige Erkennung aller Portale.
 
-Bei nicht verfügbaren Anzeigen bleiben Maildaten und Drive-Bilder erhalten.
-Der Auftrag wird abgeschlossen, Status ist „Nicht mehr verfügbar“ und es werden
-keine weiteren Bild-KI-Aufrufe für diesen Auftrag gestartet. Bilder allein beweisen
-keine aktive Anzeige. Bereits früher abgeschlossene Bestandsjobs werden nicht
-rückwirkend neu abgefragt oder umgeschrieben.
+Bei eindeutig nicht verfügbaren Anzeigen wird zuerst die vorhandene Sperrliste
+(Datensatz-ID, Original-URL, Grund) ergänzt und durch Kontrolllesen bestätigt.
+Erst danach wird eine eventuell bestehende Anzeigenzeile inhaltlich geleert;
+Formatierung und Checkbox-Regeln bleiben erhalten. Neue Inserate mit technischem
+Löschhinweis werden vor Zeilenanlage und vor jedem KI-Aufruf gesperrt. Stammt die
+Erkennung aus dem gemeinsamen Textaufruf, wird die vorläufige Zeile anschließend
+entfernt. Fehler beim Sperrlistenschreiben führen zu Retry, nicht zur Löschung.
+Ein bereits gespeicherter Sperreintrag wird nicht dupliziert. Zugriffssperren und
+unklare Antworten führen nicht zu dieser Sperrung.
+
+Der Auftrag wird abgeschlossen, ohne weitere Bild-KI-Aufrufe. Mail-Rohdaten in
+Verarbeitung und Drive-Bilder bleiben erhalten. Bilder allein beweisen keine aktive
+Anzeige. Abgeschlossene Bestandsjobs werden nicht automatisch neu geprüft.
+Der bekannte entfernte Testeintrag fotocasa:191053627 wurde am 16.10.2026 nach
+bestätigtem Eintrag in die Sperrliste aus Anzeigen entfernt.
+
+Alle frei formulierten Text- und Bildergebnisse sollen laut Prompt Deutsch sein.
+Eigennamen, Adressen, Kontaktdaten und wörtliche quote-Belege bleiben im Original.
+JSON-Feldnamen und technische Status-/Quellenwerte bleiben unverändert, damit die
+Auswertung und die Quellenprüfung funktionieren. Dies ist eine Promptvorgabe,
+keine zusätzliche KI-Übersetzungsanfrage.
 
 ## Lesbare Tabelle
 
