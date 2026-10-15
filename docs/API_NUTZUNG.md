@@ -1,5 +1,8 @@
 # Begrenzte KI-Eingaben
 
+Seitenzuordnung, getrennte Mail-/Seitenfakten, Verfügbarkeit und berechnete Lage:
+siehe [SEITENPRUEFUNG.md](SEITENPRUEFUNG.md).
+
 ## Zehn Bilder insgesamt je Inserat
 
 Die ersten höchstens zehn geeigneten Originalbilder werden in der vorhandenen

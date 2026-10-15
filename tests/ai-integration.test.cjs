@@ -63,7 +63,7 @@ test('ready mail becomes a row, survives offline page, completes photos and neve
   assert.equal(x.value(x.listing,'Datensatz-ID'),'idealista:123');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
   assert.equal(x.value(x.listing,'KI-Bewertung'),'Abgeschlossen');
-  assert.equal(x.value(x.listing,'Status'),'Vorläufig');
+  assert.equal(x.value(x.listing,'Status'),'Verfügbarkeit ungeklärt');
   assert.ok(!x.value(x.listing,'Merkmale').includes('null Zimmer'));
   assert.equal(x.value(x.listing,'Bewertungsabdeckung (%)'),20);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
@@ -77,7 +77,7 @@ test('no images can finalize facts without a missing image_review crash',()=>{
   x.ctx.processNextAiListing(x.ss);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_images');
   assert.equal(x.value(x.listing,'KI-Bewertung'),'Keine Fotos');
-  assert.equal(x.value(x.listing,'Status'),'Vorläufig');
+  assert.equal(x.value(x.listing,'Status'),'Verfügbarkeit ungeklärt');
 });
 test('blacklist prevents row creation and all AI calls',()=>{
   const x=setup({blocked:true});
@@ -104,6 +104,28 @@ test('page fetch exception still permits combined extraction from mail',()=>{
   assert.equal(JSON.parse(x.value(x.listing,'Bildanalyse JSON')).ai_pipeline.page_status,'fetch_error');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
 });
+
+test('deleted listing retains mail data and completes queue without image API calls',()=>{
+  const x=setup();x.ctx.fetchListingPageForProvider_=()=>({status:'unavailable',httpStatus:404,error:'HTTP 404'});
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'unavailable');
+  assert.equal(x.value(x.listing,'Status'),'Nicht mehr verfügbar');
+  assert.equal(x.value(x.queue,'KI Verarbeitungsstatus'),'completed');
+  assert.equal(x.value(x.listing,'Titel'),'Wohnung aus E-Mail');
+  assert.ok(!x.calls.includes('images'));
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
+});
+test('confirmed page supplements mail and remains separated in stored result',()=>{
+  const x=setup();
+  x.ctx.fetchListingPageForProvider_=()=>({status:'ok',identity_id:'idealista:123',text:'ID 123'});
+  x.ctx.callListingExtraction_=()=>({fields:{title:'Wohnung',rent_eur:950},page_fields:{rent_eur:900,area_m2:60,terrace:true},missing_fields:['area_m2'],page_check:{status:'matched',matched_listing_id:'idealista:123',reason:'Bestätigt'}});
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  assert.equal(x.value(x.listing,'Miete'),950);assert.equal(x.value(x.listing,'Fläche'),60);
+  const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  assert.equal(data.ai_pipeline.email_fields.area_m2,undefined);assert.equal(data.ai_pipeline.page_fields.area_m2,60);
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  assert.equal(x.value(x.listing,'Terrasse Punkte'),10);
+  assert.ok(!x.value(x.listing,'Offene Angaben').includes('Wohnfläche fehlt'));
+});
 test('API error persists retry and repetition reuses existing row',()=>{
   const x=setup();x.ctx.callListingExtraction_=()=>{throw new Error('OpenAI HTTP 429');};
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'retry');
@@ -127,8 +149,8 @@ test('page enrichment cannot replace facts already extracted from email',()=>{
   const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
   data.ai_pipeline.page_checked=false;
   x.listing.rows[1][headers.indexOf('Bildanalyse JSON')]=JSON.stringify(data);
-  x.ctx.fetchListingPageForProvider_=()=>({status:'ok',httpStatus:200,text:'Portal'});
-  x.ctx.callListingExtraction_=()=>({fields:{title:'Abweichender Portaltitel',rent_eur:1000},missing_fields:[]});
+  x.ctx.fetchListingPageForProvider_=()=>({status:'ok',httpStatus:200,text:'Portal',identity_id:'idealista:123'});
+  x.ctx.callListingExtraction_=()=>({fields:{title:'Abweichender Portaltitel',rent_eur:1000},missing_fields:[],page_check:{status:'matched',matched_listing_id:'idealista:123',reason:'ID bestätigt'}});
   x.ctx.processNextAiListing(x.ss);
   assert.equal(x.value(x.listing,'Titel'),'Wohnung aus E-Mail');
   assert.equal(x.value(x.listing,'Miete'),1000);

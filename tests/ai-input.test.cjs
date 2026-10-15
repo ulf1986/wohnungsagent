@@ -27,6 +27,8 @@ test('combined text uses one request with separate clean bounded sources and ful
   assert.equal(payload.page_text,'Terrasse');
   assert.equal(payload.listing_url,'https://example.test/123');
   assert.ok(request.text.format.schema.properties.fields.properties.rent_eur);
+  assert.ok(request.text.format.schema.properties.page_fields.properties.rent_eur);
+  assert.deepEqual(Array.from(request.text.format.schema.properties.page_check.properties.status.enum),['matched','unavailable','unclear']);
   assert.match(request.input[0].content[0].text,/Widersprüchen/);
 });
 test('combined text can extract from page alone and skips API only if both sources empty',()=>{
