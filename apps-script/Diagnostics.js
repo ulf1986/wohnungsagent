@@ -79,7 +79,7 @@ function logImageDiagnostic(stage, detail) {
     const event = Object.assign({}, run ? run.context : getImageLogContext(), {
       at: new Date().toISOString(), run_id: run ? run.id : 'manual',
       stage: safeImageDiagnosticValue(stage), level: input.level || 'INFO',
-      component: /^(run_|mail_|queue_status|pipeline_error|identity_audit|listing_import|availability|previews|sort)/.test(stage)
+      component: /^(run_|mail_|queue_status|pipeline_error|identity_audit|listing_import|availability|previews|sort|ai_)/.test(stage)
         ? 'pipeline' : 'converter',
       provider: getImageDiagnosticProvider(input),
       mail_id: safeImageDiagnosticValue(input.mail_id || (run && run.mailId) || ''),

@@ -41,6 +41,7 @@ const MAIL_IMPORT = {
  * Hauptfunktion des 5-Minuten-Triggers.
  */
 function runGmailImagePipeline() {
+  const pipelineStartedAt = Date.now();
   const lock = LockService.getScriptLock();
 
   if (!lock.tryLock(1000)) {
@@ -451,6 +452,23 @@ function runGmailImagePipeline() {
       count: stats.processed, uploaded: stats.uploaded, errors: stats.retry,
       status: stats.retry ? 'has_retries' : 'completed'
     });
+    // Eine KI-Stufe je Lauf; bei langen Downloads bleibt sie für den nächsten Lauf liegen.
+    if (typeof AI_PIPELINE !== 'undefined' && Date.now() - pipelineStartedAt < AI_PIPELINE.timeBudgetMs) {
+      try {
+        runImageDiagnosticStage('ai_processing', () => {
+          const result = processNextAiListing(ss, queue);
+          logImageDiagnostic('ai_result', { status: result.status, listing_id: result.listingId || '',
+            error: result.error || '', level: result.status === 'retry' ? 'WARN' : 'INFO' });
+          return result;
+        });
+      } catch (error) {
+        console.error('KI-Verarbeitung: ' + error.message);
+      } finally {
+        if (imageDiagnosticRun) { imageDiagnosticRun.mailId = ''; imageDiagnosticRun.provider = ''; }
+      }
+    } else {
+      logImageDiagnostic('ai_processing', { status: 'deferred', reason: 'Zeitbudget nach Bildimport' });
+    }
     try {
       runImageDiagnosticStage('identity_audit', () => auditListingImageAssignments(ss));
     } catch (error) {

@@ -37,8 +37,9 @@ einschließlich der optionalen WOHNUNGSAGENT_SPREADSHEET_ID-Konfiguration.
 Das Logging selbst ändert das aktive Ziel-Sheet nicht.
 
 Seit ff221af verweist CONFIG auf das aktuelle Sheet
-1_X-jdVIKwbqDABIssOOCjLC41qRqpb01paV1RtruMwg. Die vollständige 2.0-KI-Pipeline
-liegt weiterhin im separaten Pull Request #1 und wird durch Logging nicht aktiviert.
+1_X-jdVIKwbqDABIssOOCjLC41qRqpb01paV1RtruMwg. Die KI-Verarbeitung aus PR #1
+ist inzwischen gezielt in den bestehenden Ablauf integriert (siehe KI_INTEGRATION.md).
+Logging allein aktiviert sie nicht; der neue Stand muss manuell bereitgestellt sein.
 
 Schema 3 ergänzt component und provider; stage und status bleiben erhalten.
 status beschreibt das Ergebnis bzw. den Zwischenstand. provider_extract markiert
