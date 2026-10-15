@@ -45,7 +45,7 @@ function setup({ blocked = false, images = true, fileCount = 1 } = {}) {
   row[at('Queue Bildstatus')]='ready_for_ai';
   queue = new Sheet([qHeaders,row]);
   ctx.logImageDiagnostic=(stage,detail)=>logs.push({stage,...detail});
-  ctx.callListingExtraction_=()=>{calls.push('email'); return {fields:{title:'Wohnung aus E-Mail',rent_eur:null,area_m2:70,rooms:null,
+  ctx.callListingExtraction_=()=>{calls.push('email'); return {provenance_version:1,fields:{title:'Wohnung aus E-Mail',rent_eur:null,area_m2:70,rooms:null,
     long_term:null,student_only:null,seasonal_or_short_term:null,terrace:null,pool:null,amenities:[],restrictions:[]}, missing_fields:['rent_eur']};};
   ctx.fetchListingPageForProvider_=()=>{calls.push('page');return {status:'http_error',httpStatus:404,error:'HTTP 404'};};
   ctx.findDriveListingFiles_=()=>[];
@@ -91,7 +91,7 @@ test('new listing fetches page before one combined extraction and proceeds direc
   x.ctx.fetchListingPageForProvider_=()=>({status:'ok',httpStatus:200,text:'Seitenangaben'});
   x.ctx.callListingExtraction_=(_,source,subject,body,url,page)=>{
     textCalls++;assert.equal(source,'email_and_page');assert.equal(body,'Fakten aus der Mail');
-    assert.equal(page,'Seitenangaben');return {fields:{title:'Kombiniert',rent_eur:1100},missing_fields:[]};
+    assert.equal(page,'Seitenangaben');return {provenance_version:1,fields:{title:'Kombiniert',rent_eur:1100},missing_fields:[]};
   };
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
@@ -117,7 +117,7 @@ test('deleted listing retains mail data and completes queue without image API ca
 test('confirmed page supplements mail and remains separated in stored result',()=>{
   const x=setup();
   x.ctx.fetchListingPageForProvider_=()=>({status:'ok',identity_id:'idealista:123',text:'ID 123'});
-  x.ctx.callListingExtraction_=()=>({fields:{title:'Wohnung',rent_eur:950},page_fields:{rent_eur:900,area_m2:60,terrace:true},missing_fields:['area_m2'],page_check:{status:'matched',matched_listing_id:'idealista:123',reason:'Bestätigt'}});
+  x.ctx.callListingExtraction_=()=>({provenance_version:1,fields:{title:'Wohnung',rent_eur:950},page_fields:{rent_eur:900,area_m2:60,terrace:true},missing_fields:['area_m2'],page_check:{status:'matched',matched_listing_id:'idealista:123',reason:'Bestätigt'}});
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   assert.equal(x.value(x.listing,'Miete'),950);assert.equal(x.value(x.listing,'Fläche'),60);
   const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
@@ -125,6 +125,29 @@ test('confirmed page supplements mail and remains separated in stored result',()
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
   assert.equal(x.value(x.listing,'Terrasse Punkte'),10);
   assert.ok(!x.value(x.listing,'Offene Angaben').includes('Wohnfläche fehlt'));
+});
+
+test('unmatched page and mislabeled page quotes cannot populate sheet facts',()=>{
+  for(const identity of ['idealista:999','idealista:123']) {
+    const x=setup();
+    x.ctx.fetchListingPageForProvider_=()=>({status:'ok',identity_id:identity,text:'1200 Euro. Terraza privada. 90 metros'});
+    x.ctx.callListingExtraction_=()=>x.ctx.normalizeListingFacts_({fields:{
+      rent_eur:[{value:950,source:'email',quote:'950 Euro'},{value:1200,source:'listing_page',quote:'1200 Euro'}],
+      area_m2:[{value:90,source:'email',quote:'90 metros'}],
+      terrace:[{value:true,source:'listing_page',quote:'Terraza privada'}]
+    },page_check:{status:identity==='idealista:999'?'matched':'unclear',matched_listing_id:identity,reason:'Test'},missing_fields:[]},
+    'email_and_page',{email:'950 Euro',listing_page:'1200 Euro. Terraza privada. 90 metros'},
+    {rent_eur:{type:['number','null']},area_m2:{type:['number','null']},terrace:{type:['boolean','null']}});
+    assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+    assert.equal(x.value(x.listing,'Miete'),950);assert.equal(x.value(x.listing,'Fläche'),'');
+    const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+    assert.equal(data.ai_pipeline.page_fields.terrace,undefined);
+    assert.equal(data.ai_pipeline.email_fields.area_m2,null);
+    assert.equal(data.ai_pipeline.provenance_version,1);
+    assert.equal(data.ai_pipeline.rejected_facts[0].field,'area_m2');
+    assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+    assert.equal(x.value(x.listing,'Terrasse Punkte'),'');
+  }
 });
 test('API error persists retry and repetition reuses existing row',()=>{
   const x=setup();x.ctx.callListingExtraction_=()=>{throw new Error('OpenAI HTTP 429');};
@@ -150,7 +173,7 @@ test('page enrichment cannot replace facts already extracted from email',()=>{
   data.ai_pipeline.page_checked=false;
   x.listing.rows[1][headers.indexOf('Bildanalyse JSON')]=JSON.stringify(data);
   x.ctx.fetchListingPageForProvider_=()=>({status:'ok',httpStatus:200,text:'Portal',identity_id:'idealista:123'});
-  x.ctx.callListingExtraction_=()=>({fields:{title:'Abweichender Portaltitel',rent_eur:1000},missing_fields:[],page_check:{status:'matched',matched_listing_id:'idealista:123',reason:'ID bestätigt'}});
+  x.ctx.callListingExtraction_=()=>({provenance_version:1,fields:{title:'Abweichender Portaltitel',rent_eur:1000},missing_fields:[],page_check:{status:'matched',matched_listing_id:'idealista:123',reason:'ID bestätigt'}});
   x.ctx.processNextAiListing(x.ss);
   assert.equal(x.value(x.listing,'Titel'),'Wohnung aus E-Mail');
   assert.equal(x.value(x.listing,'Miete'),1000);

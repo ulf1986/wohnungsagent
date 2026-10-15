@@ -39,17 +39,22 @@ test('canonical identity is preserved in compact text; conflicting metadata is n
   assert.equal(x.ctx.listingPageIdentityIds_(html+`<meta property="og:url" content="${url.replace('123','999')}">`).length,2);
 });
 test('page fields accepted only with both technical identity and matching AI assessment',()=>{
-  const x=setup(),result={fields:{rent_eur:950,terrace:null},page_fields:{rent_eur:900,terrace:true},
+  const x=setup(),result={provenance_version:1,fields:{rent_eur:950,terrace:null},page_fields:{rent_eur:900,terrace:true},
     page_check:{status:'matched',matched_listing_id:'fotocasa:123',reason:'ID und Daten passen'}};
   const accepted=x.ctx.acceptListingPageResult_(result,{status:'ok',identity_id:'fotocasa:123'},'fotocasa:123');
   assert.equal(accepted.fields.rent_eur,950);assert.equal(accepted.fields.terrace,true);
+  assert.equal(accepted.conflicts[0].field,'rent_eur');assert.equal(accepted.conflicts[0].selected_source,'email');
   for(const identity_id of [null,'fotocasa:999']){
     const rejected=x.ctx.acceptListingPageResult_(result,{status:'ok',identity_id},'fotocasa:123');
     assert.equal(rejected.pageCheck.status,'unclear');assert.equal(rejected.fields.terrace,null);
   }
 });
+
+test('text response without validated source evidence fails closed',()=>{
+  const x=setup();assert.throws(()=>x.ctx.acceptListingPageResult_({fields:{rent_eur:950}},{status:'ok'},'fotocasa:123'),/Quellenbelege/);
+});
 test('technical deletion overrides a hallucinated AI match and retains mail facts',()=>{
-  const x=setup(),r=x.ctx.acceptListingPageResult_({fields:{rent_eur:950},page_fields:{pool:true},
+  const x=setup(),r=x.ctx.acceptListingPageResult_({provenance_version:1,fields:{rent_eur:950},page_fields:{pool:true},
     page_check:{status:'matched',matched_listing_id:'fotocasa:123'}},{status:'unavailable',error:'HTTP 404'},'fotocasa:123');
   assert.equal(r.pageCheck.status,'unavailable');assert.equal(r.fields.rent_eur,950);assert.equal(r.fields.pool,undefined);
 });

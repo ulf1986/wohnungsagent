@@ -3,9 +3,25 @@
 ## Standard-API, ein gemeinsamer Textaufruf
 
 E-Mail und kompakter Seitentext bleiben getrennte Eingaben eines einzigen Aufrufs.
-Die Antwort enthält Mailfakten (`fields`), Seitenfakten (`page_fields`), offene
-Felder und `page_check` mit Status `matched`, `unavailable` oder `unclear`,
-bestätigter Inserats-ID und Begründung. Kein zusätzlicher KI-Aufruf.
+Die API-Antwort enthält pro Feld eine Kandidatenliste mit Wert (`value`), Quelle
+(`source`: email/listing_page) und kurzem wörtlichem Beleg (`quote`), offene Felder
+und `page_check` mit Status `matched`, `unavailable` oder `unclear`, bestätigter
+Inserats-ID und Begründung. Kein zusätzlicher KI-Aufruf.
+
+Der Code prüft Typ, erlaubte Quelle und ob das Belegzitat nach Normalisierung von
+Leerzeichen, Unicode und Groß-/Kleinschreibung tatsächlich in genau dem übertragenen
+Quelltext vorkommt. Unbelegte, falsch zugeordnete oder innerhalb einer Quelle
+widersprüchliche Kandidaten werden verworfen. Erst danach baut der Code getrennte
+Mailfakten (`email_fields`) und Seitenfakten (`page_fields`) auf. Nicht die KI
+entscheidet, welcher Speicherbereich einen Kandidaten erhält. Widersprüche zwischen
+beiden bestätigten Quellen bleiben unter `source_conflicts` nachvollziehbar; die
+Mailangabe hat Vorrang. Im Sheet erscheint ein Konflikthinweis. Nachweise liegen
+unter `field_provenance`, verworfene Kandidaten unter `rejected_facts`.
+
+Die Zitatprüfung bestätigt das Vorkommen und die Herkunft des Belegs, nicht dessen
+semantisch korrekte Interpretation durch die KI. Der Prompt verlangt weiterhin,
+dass das Zitat den Wert tatsächlich belegt. Bereits früher gespeicherte Ergebnisse
+werden nicht automatisch neu extrahiert oder nachträglich als belegt markiert.
 
 Seitenfakten dürfen nur bei übereinstimmender ID aus canonical/og:url und bestätigter
 KI-Zuordnung übernommen werden. Die angefragte URL oder ein generischer Titel allein

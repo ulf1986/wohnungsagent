@@ -27,7 +27,8 @@ test('combined text uses one request with separate clean bounded sources and ful
   assert.equal(payload.page_text,'Terrasse');
   assert.equal(payload.listing_url,'https://example.test/123');
   assert.ok(request.text.format.schema.properties.fields.properties.rent_eur);
-  assert.ok(request.text.format.schema.properties.page_fields.properties.rent_eur);
+  assert.ok(request.text.format.schema.properties.fields.properties.rent_eur.items.properties.quote);
+  assert.deepEqual(Array.from(request.text.format.schema.properties.fields.properties.rent_eur.items.required),['value','source','quote']);
   assert.deepEqual(Array.from(request.text.format.schema.properties.page_check.properties.status.enum),['matched','unavailable','unclear']);
   assert.match(request.input[0].content[0].text,/Widersprüchen/);
 });
@@ -37,6 +38,41 @@ test('combined text can extract from page alone and skips API only if both sourc
   assert.equal(x.requests.length,1);
   x.ctx.callListingExtraction_({model:'test'},'email_and_page','','','https://example.test','',null);
   assert.equal(x.requests.length,1);
+});
+
+test('real request adapter verifies quotes and routes each candidate by source',()=>{
+  const x=setup();let calls=0;
+  x.ctx.openAiRequest_=()=>{calls++;return {status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({
+    fields:{rent_eur:[{value:1100,source:'email',quote:'1.100 €'},{value:1200,source:'listing_page',quote:'1.200 €'}],
+      long_term:[{value:false,source:'email',quote:'Alquiler temporal'}],
+      terrace:[{value:true,source:'listing_page',quote:'Terraza privada'}]},
+    page_check:{status:'matched',matched_listing_id:'example:123',reason:'ID bestätigt'},missing_fields:[]
+  })}]}]};};
+  const result=x.ctx.callListingExtraction_({model:'test'},'email_and_page','Wohnung','Precio 1.100 €',
+    'https://example.test/123','Precio 1.200 €. Terraza privada. Alquiler temporal.',null);
+  assert.equal(calls,1);assert.equal(result.fields.rent_eur,1100);assert.equal(result.page_fields.rent_eur,1200);
+  assert.equal(result.fields.long_term,null); // Das Zitat steht ausschließlich auf der Seite.
+  assert.equal(result.fields.terrace,null);assert.equal(result.page_fields.terrace,true);
+  assert.ok(result.rejected_facts.some(f=>f.field==='long_term'));
+  assert.equal(result.provenance_version,1);
+});
+test('invalid types, paraphrased or missing quotes and duplicate conflicts are rejected',()=>{
+  const x=setup(),spec={rent_eur:{type:['number','null']},terrace:{type:['boolean','null']},amenities:{type:'array'}};
+  const r=x.ctx.normalizeListingFacts_({fields:{
+    rent_eur:[{value:1100,source:'email',quote:'1100 Euro'},{value:1200,source:'email',quote:'1200 Euro'}],
+    terrace:[{value:'true',source:'email',quote:'Terrasse'},{value:true,source:'listing_page',quote:'Nicht vorhandenes Zitat'}],
+    amenities:[{value:['Aufzug',5],source:'email',quote:'Aufzug'}]
+  }},'email_and_page',{email:'1100 Euro oder 1200 Euro. Terrasse. Aufzug',listing_page:'Keine Angaben'},spec);
+  assert.equal(r.fields.rent_eur,null);assert.equal(r.fields.terrace,null);assert.equal(r.page_fields.terrace,null);
+  assert.equal(r.fields.amenities.length,0);assert.equal(r.rejected_facts.length,4);
+});
+test('false and zero are preserved with verified quotes; wrong source is rejected in page-only mode',()=>{
+  const x=setup(),r=x.ctx.normalizeListingFacts_({fields:{
+    rent_eur:[{value:0,source:'listing_page',quote:'0 Euro'}],
+    pool:[{value:false,source:'listing_page',quote:'sin piscina'},{value:true,source:'email',quote:'sin piscina'}]
+  }},'listing_page',{email:'sin piscina',listing_page:'0 Euro, sin piscina'},
+  {rent_eur:{type:['number','null']},pool:{type:['boolean','null']}});
+  assert.equal(r.fields.rent_eur,0);assert.equal(r.fields.pool,false);assert.equal(r.rejected_facts.length,1);
 });
 
 test('first ten distinct photos preserve source order, reject badges and freeze selection',()=>{
