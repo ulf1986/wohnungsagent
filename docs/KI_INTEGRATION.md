@@ -26,8 +26,10 @@ Integrationsauftrag wurde keine Apps-Script-Funktion ausgeführt.
 2. Falls nötig: fehlende Fakten von der Inseratsseite ergänzen. Eine inzwischen
    gelöschte oder blockierte Seite verhindert nicht die weitere Bewertung bereits
    gespeicherter Maildaten und Fotos; fehlende Angaben bleiben sichtbar.
-3. Pro weiterem Aufruf höchstens fünf gespeicherte Fotos bewerten. Ergebnisse und
-   bearbeitete Datei-IDs werden gespeichert. Abschluss erst nach allen Fotos.
+3. Pro weiterem Aufruf höchstens fünf gespeicherte Fotos bewerten. Insgesamt die
+   ersten maximal zehn geeigneten Originalbilder je Inserat, dauerhaft ausgewählt.
+   Ergebnisse und bearbeitete Datei-IDs werden gespeichert. Abschluss nach dieser
+   Auswahl; weitere Drive-Bilder bleiben erhalten. Details: API_NUTZUNG.md.
 
 Bereits nach der ersten erfolgreichen Faktenstufe ist die Anzeigenzeile sichtbar.
 Ein einzelner Aufruf liefert noch nicht zwingend eine fertige Bewertung.

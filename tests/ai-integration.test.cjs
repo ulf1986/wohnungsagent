@@ -22,7 +22,7 @@ const headers = ['Gesehen','Zu löschen','Punkte','E-Mail-Eingang','Vorschaubild
   'Terrasse Punkte','Pool Punkte','Bildbewertung Punkte','Distanz Punkte','Fläche Punkte','Gmail-Link','Datensatz-ID','Anzeigen-ID',
   'E-Mail-ID','KI-Bewertung','Bildanalyse JSON','Duplikatprüfung JSON','Suchfilter','Chat Nachricht','E-Mail Kontakt','WhatsApp Kontakt','Telefon Anruf'];
 
-function setup({ blocked = false, images = true } = {}) {
+function setup({ blocked = false, images = true, fileCount = 1 } = {}) {
   const calls = [], logs = [], props = new Map([['OPENAI_API_KEY','test-key'],['OPENAI_MODEL','test-model']]);
   const listing = new Sheet([headers, [false,false], [false,false]]);
   const blacklist = new Sheet([['Sperrliste Datensatz-ID'], ...(blocked ? [['idealista:123']] : [])]);
@@ -31,16 +31,17 @@ function setup({ blocked = false, images = true } = {}) {
   const ctx = vm.createContext({ console:{ log(){}, error(){}, warn(){} },
     PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k)})},
     SpreadsheetApp:{openById:()=>ss,flush(){}},
-    DriveApp:{getFileById:()=>({getSize:()=>5000})}
+    DriveApp:{getFileById:id=>({getSize:()=>5000,getBlob:()=>({getBytes:()=>new Array(5000).fill(Number(id.split('-').pop()) || 1),getContentType:()=> 'image/jpeg'})})},
+    Utilities:{DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,bytes)=>Array.from(require('node:crypto').createHash('sha256').update(Buffer.from(bytes)).digest())}
   });
-  for(const name of ['Drive','Pisos','ImmoScout','Milanuncios','Diagnostics','GmailImport','Fotocasa','Idealista','Yaencontre','Main','AIProcessing'])
+  for(const name of ['Drive','Pisos','ImmoScout','Milanuncios','Diagnostics','GmailImport','Fotocasa','Idealista','Yaencontre','Main','AiInput','AIProcessing'])
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../apps-script',name+'.js'),'utf8'),ctx);
   const qHeaders = vm.runInContext("['E-Mail-ID','Eingang','Verarbeitet','Status','Anzahl','IDs','Fehler',...MAIL_IMPORT.headers,...AI_PIPELINE.queueHeaders]",ctx);
   const row = qHeaders.map(()=>''), at = n=>qHeaders.indexOf(n);
   row[at('Queue Gmail-ID')]='mail-1'; row[at('Queue Eingang UTC')]='2026-10-15T12:00:00.000Z';
   row[at('Queue Betreff')]='Wohnung'; row[at('Queue Originaltext')]='Fakten aus der Mail';
   row[at('Queue Inseratslinks JSON')]=JSON.stringify(['https://www.idealista.com/inmueble/123/?tracking=a','https://www.idealista.com/inmueble/123/']);
-  row[at('Queue Drive-Dateien JSON')]=JSON.stringify(images ? [{file_id:'photo-1',listing_id:'idealista:123',source_url:'https://img4.idealista.com/photo.jpg'}] : []);
+  row[at('Queue Drive-Dateien JSON')]=JSON.stringify(images ? Array.from({length:fileCount},(_,i)=>({file_id:'photo-'+(i+1),listing_id:'idealista:123',source_url:'https://img4.idealista.com/photo'+(i+1)+'.jpg'})) : []);
   row[at('Queue Bildstatus')]='ready_for_ai';
   queue = new Sheet([qHeaders,row]);
   ctx.logImageDiagnostic=(stage,detail)=>logs.push({stage,...detail});
@@ -48,7 +49,7 @@ function setup({ blocked = false, images = true } = {}) {
     long_term:null,student_only:null,seasonal_or_short_term:null,terrace:null,pool:null,amenities:[],restrictions:[]}, missing_fields:['rent_eur']};};
   ctx.fetchListingPageForProvider_=()=>{calls.push('page');return {status:'http_error',httpStatus:404,error:'HTTP 404'};};
   ctx.findDriveListingFiles_=()=>[];
-  ctx.callImageReview_=()=>{calls.push('images');return {images:[{index:1,brightness:4,space:4,furniture_condition:4,care_renovation:4}],summary:'Helle Räume'};};
+  ctx.callImageReview_=(_,batch)=>{calls.push('images');return {images:batch.map((_,i)=>({index:i+1,brightness:4,space:4,furniture_condition:4,care_renovation:4})),summary:'Helle Räume'};};
   const value = (sheet,col,row=1)=>sheet.rows[row]?.[sheet.rows[0].indexOf(col)];
   const setQueue = (col,v)=>queue.rows[1][at(col)]=v;
   return {ctx,listing,queue,blacklist,props,calls,logs,value,setQueue,ss};
@@ -125,6 +126,37 @@ test('multi-listing ready flag is not enough to authorize AI processing',()=>{
   assert.equal(x.ctx.processNextAiListing(x.ss).reason,'ambiguous_listing');
   assert.deepEqual(x.calls,[]);
   assert.equal(x.value(x.listing,'Datensatz-ID'),undefined);
+});
+
+test('20 images stop after first ten across batches, another mail and subsequent retries',()=>{
+  const x=setup({fileCount:20}), sent=[];
+  const review=x.ctx.callImageReview_;
+  x.ctx.callImageReview_=(config,batch,prior)=>{sent.push(...Array.from(batch,f=>f.file_id));return review(config,batch,prior);};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'email_extracted');
+  assert.match(x.ctx.processNextAiListing(x.ss).status,/page_checked/);
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'processing');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  assert.deepEqual(sent,Array.from({length:10},(_,i)=>'photo-'+(i+1)));
+  assert.match(x.value(x.listing,'Zusammenfassung'),/ersten 10/);
+  assert.ok(!x.value(x.listing,'Offene Angaben').includes('Bildanalyse unvollständig'));
+  x.setQueue('Queue Gmail-ID','mail-2');
+  x.setQueue('Queue Drive-Dateien JSON',JSON.stringify([{file_id:'photo-21',listing_id:'idealista:123'}]));
+  x.setQueue('KI Verarbeitungsstatus','pending');x.setQueue('KI Abgeschlossene Anzeigen JSON','[]');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  assert.equal(sent.length,10);
+});
+
+test('image failure preserves selection, retry does not replace ten images with new arrivals',()=>{
+  const x=setup({fileCount:15});
+  x.ctx.processNextAiListing(x.ss);x.ctx.processNextAiListing(x.ss);
+  const review=x.ctx.callImageReview_;x.ctx.callImageReview_=()=>{throw new Error('API HTTP 429');};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'retry');
+  const before=JSON.parse(x.value(x.listing,'Bildanalyse JSON')).ai_pipeline.image_selection.map(f=>f.file_id);
+  assert.equal(before.length,10);
+  x.setQueue('KI Wiederholung ab UTC','');x.ctx.callImageReview_=review;
+  x.ctx.processNextAiListing(x.ss);x.ctx.processNextAiListing(x.ss);
+  const after=JSON.parse(x.value(x.listing,'Bildanalyse JSON')).ai_pipeline.image_selection.map(f=>f.file_id);
+  assert.deepEqual(before,after);
 });
 test('portal spoof host and corrupted existing JSON fail safely',()=>{
   const x=setup();
