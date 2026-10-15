@@ -1,5 +1,23 @@
 # Seitenprüfung und Tabellenanzeige
 
+## Geltung für alle Portale
+
+Fotocasa, Idealista, Pisos, Yaencontre, ImmoScout und Milanuncios verwenden dieselbe
+zentrale KI-Verarbeitung in AIProcessing.js. Ihre bestehenden Parser bleiben für
+Linkerkennung, stabile Inserats-ID und Zuordnung der Bilder zuständig. Die gemeinsame
+Mailqueue übergibt eindeutige Inserate an processNextAiListing; die allgemeine Pipeline
+und der manuelle KI-Lauf verwenden denselben Einstieg.
+
+Damit gelten deutsche Ergebnisvorgaben, Quellen-/Zitatprüfung, Seitenzuordnung,
+gemeinsame Textauswertung, Qualitätsbewertung der Originalbilder, Zehnergrenze,
+berechnete Lage und Sperrliste für alle sechs Portale. Es gibt keine getrennten
+KI-Prompts pro Portal. Mehrdeutige Mehrfachangebote bleiben im vorhandenen Retry.
+
+Automatisierte Integrationstests prüfen je Portal Domain-/ID-Routing, bestätigte und
+unklare Seiten sowie die Sperrung entfernter Angebote. Server-/KI-Antworten sind
+dabei simuliert. Diese Tests bestätigen keine aktuelle Live-Erreichbarkeit der
+Portale und ersetzen die noch ausstehenden echten Portaltests nicht.
+
 ## Standard-API, ein gemeinsamer Textaufruf
 
 E-Mail und kompakter Seitentext bleiben getrennte Eingaben eines einzigen Aufrufs.

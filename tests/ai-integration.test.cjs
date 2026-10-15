@@ -47,12 +47,13 @@ function setup({ blocked = false, images = true, fileCount = 1 } = {}) {
   ctx.logImageDiagnostic=(stage,detail)=>logs.push({stage,...detail});
   ctx.callListingExtraction_=()=>{calls.push('email'); return {provenance_version:1,fields:{title:'Wohnung aus E-Mail',rent_eur:null,area_m2:70,rooms:null,
     long_term:null,student_only:null,seasonal_or_short_term:null,terrace:null,pool:null,amenities:[],restrictions:[]}, missing_fields:['rent_eur']};};
+  const providerPageFetcher=ctx.fetchListingPageForProvider_;
   ctx.fetchListingPageForProvider_=()=>{calls.push('page');return {status:'http_error',httpStatus:404,error:'HTTP 404'};};
   ctx.findDriveListingFiles_=()=>[];
   ctx.callImageReview_=(_,batch)=>{calls.push('images');return {images:batch.map((_,i)=>({index:i+1,brightness:4,space:4,furniture_condition:4,care_renovation:4})),summary:'Helle Räume'};};
   const value = (sheet,col,row=1)=>sheet.rows[row]?.[sheet.rows[0].indexOf(col)];
   const setQueue = (col,v)=>queue.rows[1][at(col)]=v;
-  return {ctx,listing,queue,blacklist,props,calls,logs,value,setQueue,ss};
+  return {ctx,listing,queue,blacklist,props,calls,logs,value,setQueue,ss,providerPageFetcher};
 }
 
 test('ready mail becomes a row, survives offline page, completes photos and never creates duplicates',()=>{
@@ -256,3 +257,69 @@ test('portal spoof host and corrupted existing JSON fail safely',()=>{
   assert.throws(()=>raw.parseAiListingJson_('invalid-json'));
   assert.throws(()=>raw.parseAiListingJson_('[]'));
 });
+
+const portalCases=[
+  ['idealista','https://www.idealista.com/inmueble/123/'],
+  ['fotocasa','https://www.fotocasa.es/es/alquiler/vivienda/malaga/ascensor/123/d'],
+  ['pisos','https://www.pisos.com/alquilar/piso-malaga-123_456/'],
+  ['yaencontre','https://www.yaencontre.com/alquiler/piso/inmueble-456-123'],
+  ['immoscout','https://www.immobilienscout24.de/expose/171726535'],
+  ['milanuncios','https://www.milanuncios.com/ads/malaga-capital-619803957.htm']
+];
+function portalSetup(provider,url) {
+  const x=setup(),id=x.ctx.getMailListingId(url);
+  assert.ok(id && id.startsWith(provider+':'),'Portal-Parser muss eine stabile ID liefern: '+provider);
+  x.setQueue('Queue Inseratslinks JSON',JSON.stringify([url]));
+  x.setQueue('Queue Drive-Dateien JSON',JSON.stringify([{file_id:'photo-1',listing_id:id,source_url:'https://images.example.test/photo.jpg'}]));
+  return {...x,id};
+}
+for(const [provider,url] of portalCases) {
+  test(provider+': real domain and ID routing accepts a matching canonical listing page',()=>{
+    const x=portalSetup(provider,url);let fetched=0;
+    x.ctx.UrlFetchApp={fetch:(u,options)=>{
+      fetched++;assert.equal(u,url);assert.equal(options.followRedirects,false);
+      return {getResponseCode:()=>200,getContentText:()=>'<link rel="canonical" href="'+url+'"><h1>Wohnung</h1><main>Objektdaten</main>'};
+    }};
+    const page=x.providerPageFetcher(url);
+    assert.equal(page.status,'ok');assert.equal(page.identity_id,x.id);assert.equal(fetched,1);
+  });
+  test(provider+': same source validation, text stage and original-image stage',()=>{
+    const x=portalSetup(provider,url);let texts=0,fetches=0;
+    x.ctx.fetchListingPageForProvider_=u=>{fetches++;assert.equal(u,url);return {status:'ok',identity_id:x.id,text:'Terraza privada'};};
+    x.ctx.callListingExtraction_=(_,source)=>{
+      texts++;assert.equal(source,'email_and_page');
+      return x.ctx.normalizeListingFacts_({fields:{
+        rent_eur:[{value:950,source:'email',quote:'950 Euro'}],
+        terrace:[{value:true,source:'listing_page',quote:'Terraza privada'}]
+      },page_check:{status:'matched',matched_listing_id:x.id,reason:'Bestätigte Identität'},missing_fields:[]},
+      source,{email:'950 Euro',listing_page:'Terraza privada'},
+      {rent_eur:{type:['number','null']},terrace:{type:['boolean','null']}});
+    };
+    assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+    assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+    assert.equal(x.value(x.listing,'Datensatz-ID'),x.id);
+    assert.equal(x.value(x.listing,'Portal'),provider);
+    assert.equal(x.value(x.listing,'Miete'),950);assert.equal(x.value(x.listing,'Terrasse Punkte'),10);
+    assert.equal(texts,1);assert.equal(fetches,1);assert.ok(x.calls.includes('images'));
+    assert.equal(JSON.parse(x.value(x.listing,'Bildanalyse JSON')).analyzed_file_ids.length,1);
+  });
+  test(provider+': unclear page cannot contribute facts',()=>{
+    const x=portalSetup(provider,url);
+    x.ctx.fetchListingPageForProvider_=()=>({status:'ok',identity_id:x.id,text:'Terraza privada'});
+    x.ctx.callListingExtraction_=()=>x.ctx.normalizeListingFacts_({fields:{
+      terrace:[{value:true,source:'listing_page',quote:'Terraza privada'}]
+    },page_check:{status:'unclear',matched_listing_id:null,reason:'Zuordnung unklar'},missing_fields:[]},
+    'email_and_page',{email:'Wohnung',listing_page:'Terraza privada'},{terrace:{type:['boolean','null']}});
+    x.ctx.processNextAiListing(x.ss);x.ctx.processNextAiListing(x.ss);
+    assert.equal(x.value(x.listing,'Terrasse Punkte'),'');
+    assert.equal(x.value(x.listing,'Status'),'Verfügbarkeit ungeklärt');
+  });
+  test(provider+': unavailable page is blacklisted without AI or listing row',()=>{
+    const x=portalSetup(provider,url);
+    x.ctx.fetchListingPageForProvider_=()=>({status:'unavailable',httpStatus:404,error:'HTTP 404'});
+    assert.equal(x.ctx.processNextAiListing(x.ss).status,'unavailable');
+    assert.equal(x.value(x.blacklist,'Sperrliste Datensatz-ID'),x.id);
+    assert.equal(x.value(x.listing,'Datensatz-ID'),undefined);
+    assert.deepEqual(x.calls,[]);
+  });
+}
