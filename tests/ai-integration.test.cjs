@@ -57,11 +57,10 @@ function setup({ blocked = false, images = true, fileCount = 1 } = {}) {
 
 test('ready mail becomes a row, survives offline page, completes photos and never creates duplicates',()=>{
   const x=setup();
-  assert.equal(x.ctx.processNextAiListing(x.ss).status,'email_extracted');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   assert.equal(x.value(x.listing,'Titel'),'Wohnung aus E-Mail');
   assert.equal(x.value(x.listing,'Eingang (UTC)'),'2026-10-15T12:00:00.000Z');
   assert.equal(x.value(x.listing,'Datensatz-ID'),'idealista:123');
-  assert.equal(x.ctx.processNextAiListing(x.ss).status,'page_checked_http_error');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
   assert.equal(x.value(x.listing,'KI-Bewertung'),'Abgeschlossen');
   assert.equal(x.value(x.listing,'Status'),'Vorläufig');
@@ -71,11 +70,11 @@ test('ready mail becomes a row, survives offline page, completes photos and neve
   x.setQueue('KI Verarbeitungsstatus','pending'); x.setQueue('KI Abgeschlossene Anzeigen JSON','[]');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
   assert.equal(x.listing.rows.filter(r=>r[headers.indexOf('Datensatz-ID')]==='idealista:123').length,1);
-  assert.deepEqual(x.calls,['email','page','images']);
+  assert.deepEqual(x.calls,['page','email','images']);
 });
 test('no images can finalize facts without a missing image_review crash',()=>{
   const x=setup({images:false});
-  x.ctx.processNextAiListing(x.ss); x.ctx.processNextAiListing(x.ss);
+  x.ctx.processNextAiListing(x.ss);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_images');
   assert.equal(x.value(x.listing,'KI-Bewertung'),'Keine Fotos');
   assert.equal(x.value(x.listing,'Status'),'Vorläufig');
@@ -85,6 +84,25 @@ test('blacklist prevents row creation and all AI calls',()=>{
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'blocked');
   assert.equal(x.value(x.listing,'Datensatz-ID'),undefined);
   assert.deepEqual(x.calls,[]);
+});
+
+test('new listing fetches page before one combined extraction and proceeds directly to images',()=>{
+  const x=setup();let textCalls=0;
+  x.ctx.fetchListingPageForProvider_=()=>({status:'ok',httpStatus:200,text:'Seitenangaben'});
+  x.ctx.callListingExtraction_=(_,source,subject,body,url,page)=>{
+    textCalls++;assert.equal(source,'email_and_page');assert.equal(body,'Fakten aus der Mail');
+    assert.equal(page,'Seitenangaben');return {fields:{title:'Kombiniert',rent_eur:1100},missing_fields:[]};
+  };
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  assert.equal(textCalls,1);
+  assert.equal(x.value(x.listing,'Miete'),1100);
+});
+test('page fetch exception still permits combined extraction from mail',()=>{
+  const x=setup();x.ctx.fetchListingPageForProvider_=()=>{throw new Error('offline');};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  assert.equal(JSON.parse(x.value(x.listing,'Bildanalyse JSON')).ai_pipeline.page_status,'fetch_error');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
 });
 test('API error persists retry and repetition reuses existing row',()=>{
   const x=setup();x.ctx.callListingExtraction_=()=>{throw new Error('OpenAI HTTP 429');};
@@ -106,6 +124,9 @@ test('missing key and conflicting target are explicit failures before importing'
 });
 test('page enrichment cannot replace facts already extracted from email',()=>{
   const x=setup();x.ctx.processNextAiListing(x.ss);
+  const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  data.ai_pipeline.page_checked=false;
+  x.listing.rows[1][headers.indexOf('Bildanalyse JSON')]=JSON.stringify(data);
   x.ctx.fetchListingPageForProvider_=()=>({status:'ok',httpStatus:200,text:'Portal'});
   x.ctx.callListingExtraction_=()=>({fields:{title:'Abweichender Portaltitel',rent_eur:1000},missing_fields:[]});
   x.ctx.processNextAiListing(x.ss);
@@ -132,8 +153,7 @@ test('20 images stop after first ten across batches, another mail and subsequent
   const x=setup({fileCount:20}), sent=[];
   const review=x.ctx.callImageReview_;
   x.ctx.callImageReview_=(config,batch,prior)=>{sent.push(...Array.from(batch,f=>f.file_id));return review(config,batch,prior);};
-  assert.equal(x.ctx.processNextAiListing(x.ss).status,'email_extracted');
-  assert.match(x.ctx.processNextAiListing(x.ss).status,/page_checked/);
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'processing');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
   assert.deepEqual(sent,Array.from({length:10},(_,i)=>'photo-'+(i+1)));
@@ -148,7 +168,7 @@ test('20 images stop after first ten across batches, another mail and subsequent
 
 test('image failure preserves selection, retry does not replace ten images with new arrivals',()=>{
   const x=setup({fileCount:15});
-  x.ctx.processNextAiListing(x.ss);x.ctx.processNextAiListing(x.ss);
+  x.ctx.processNextAiListing(x.ss);
   const review=x.ctx.callImageReview_;x.ctx.callImageReview_=()=>{throw new Error('API HTTP 429');};
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'retry');
   const before=JSON.parse(x.value(x.listing,'Bildanalyse JSON')).ai_pipeline.image_selection.map(f=>f.file_id);

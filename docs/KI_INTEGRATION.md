@@ -22,11 +22,13 @@ Sie verwendet dieselbe processNextAiListing-Funktion und denselben Script-Lock,
 also keinen zweiten Importweg. Aufruf später ausdrücklich manuell; in diesem
 Integrationsauftrag wurde keine Apps-Script-Funktion ausgeführt.
 
-1. E-Mail-Fakten: eine stabile Anzeigenzeile unter Anzeigen anlegen, Fakten extrahieren.
-2. Falls nötig: fehlende Fakten von der Inseratsseite ergänzen. Eine inzwischen
-   gelöschte oder blockierte Seite verhindert nicht die weitere Bewertung bereits
-   gespeicherter Maildaten und Fotos; fehlende Angaben bleiben sichtbar.
-3. Pro weiterem Aufruf höchstens fünf gespeicherte Fotos bewerten. Insgesamt die
+1. Eine stabile Anzeigenzeile unter Anzeigen anlegen, die Inseratsseite abrufen und
+   E-Mail plus bereinigten Seitentext in einem gemeinsamen Standard-API-Aufruf
+   auswerten. Eine gelöschte oder blockierte Seite verhindert die Mailauswertung
+   nicht; fehlende Angaben bleiben offen. Status nach Erfolg: text_extracted.
+   Begonnene Bestandsjobs mit gespeicherten E-Mail-Fakten setzen ihren bisherigen
+   Seitenergänzungsschritt fort, ohne die E-Mail nochmals auszuwerten.
+2. Pro weiterem Aufruf höchstens fünf gespeicherte Fotos bewerten. Insgesamt die
    ersten maximal zehn geeigneten Originalbilder je Inserat, dauerhaft ausgewählt.
    Ergebnisse und bearbeitete Datei-IDs werden gespeichert. Abschluss nach dieser
    Auswahl; weitere Drive-Bilder bleiben erhalten. Details: API_NUTZUNG.md.

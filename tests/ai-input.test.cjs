@@ -17,6 +17,26 @@ function setup(){
   return {ctx,files,requests,logs,photo};
 }
 
+test('combined text uses one request with separate clean bounded sources and full schema',()=>{
+  const x=setup();
+  x.ctx.callListingExtraction_({model:'test'},'email_and_page','Wohnung','<p>Mailpreis 1100</p>',
+    'https://example.test/123?tracking=secret','<script>bad()</script><p>Terrasse</p>',null);
+  assert.equal(x.requests.length,1);
+  const request=x.requests[0],payload=JSON.parse(request.input[1].content[0].text);
+  assert.equal(payload.email_text,'Mailpreis 1100');
+  assert.equal(payload.page_text,'Terrasse');
+  assert.equal(payload.listing_url,'https://example.test/123');
+  assert.ok(request.text.format.schema.properties.fields.properties.rent_eur);
+  assert.match(request.input[0].content[0].text,/Widersprüchen/);
+});
+test('combined text can extract from page alone and skips API only if both sources empty',()=>{
+  const x=setup();
+  x.ctx.callListingExtraction_({model:'test'},'email_and_page','','','https://example.test','Portaltext',null);
+  assert.equal(x.requests.length,1);
+  x.ctx.callListingExtraction_({model:'test'},'email_and_page','','','https://example.test','',null);
+  assert.equal(x.requests.length,1);
+});
+
 test('first ten distinct photos preserve source order, reject badges and freeze selection',()=>{
   const x=setup();const files=[{...x.photo('badge'),name:'badge_ios.png'},x.photo('a',2),x.photo('alias',2),
     ...Array.from({length:15},(_,i)=>x.photo('p'+i,i+3))];

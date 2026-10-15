@@ -39,13 +39,18 @@ dieses Batches nicht sicher ausschließen. Es werden dabei keine weiteren Bildid
 
 ## Text und Prompts
 
-Die drei funktionalen Aufrufe bleiben erhalten: E-Mail-Fakten, fehlende Seitenangaben,
-Bildbewertung. Die KI-Extraktion wird nicht durch neue Anbieter-Parser ersetzt.
+Neue Inserate verwenden einen gemeinsamen Textaufruf für E-Mail und Portal-Seite,
+danach die Bildbewertung. Die Seite wird grundsätzlich vorher über die vorhandenen
+Anbieterfunktionen abgerufen. HTTP-Fehler und Abrufausnahmen lassen die Verarbeitung
+mit dem Mailtext fortfahren. Die KI-Extraktion wird nicht durch neue Anbieter-Parser ersetzt.
 Rückgaben bleiben strukturierte JSON-Objekte mit festem Schema.
 
 - E-Mail: bereinigter Betreff (maximal 300 Zeichen), Klartext (maximal 10.000 Zeichen),
-  Inseratslink ohne Query/Fragment und angeforderte Feldnamen. Kein Seitentext und
-  keine leeren Zusatzobjekte. Gespeicherte Fakten werden weiterhin wiederverwendet.
+  Inseratslink ohne Query/Fragment und angeforderte Feldnamen. Der bereinigte
+  Seitentext steht separat unter page_text (maximal 10.000 Zeichen). Belege sollen
+  email: bzw. listing_page: nennen; bei Widersprüchen bleibt die belegte Mailangabe
+  erhalten und der Konflikt wird in evidence dokumentiert. Gespeicherte Fakten
+  werden weiterhin wiederverwendet.
 - Seite: relevante Titel-/Beschreibung-/Inseratsdaten aus JSON-LD sowie der bereinigte
   main-/article-Bereich, sofern vorhanden. Sonst bereinigter sichtbarer Text als
   Fallback. Skripte, Styles, Navigation, Header, Footer, Formulare und Seitenleisten
@@ -53,7 +58,7 @@ Rückgaben bleiben strukturierte JSON-Objekte mit festem Schema.
   Typische Abmelde-/Cookiezeilen und identische Textzeilen werden entfernt.
   Höchstens 10.000 Zeichen. Unterschiedliche Portal-Layouts können im sichtbaren
   Text dennoch Werbung enthalten; dies ist eine regelbasierte Bereinigung.
-- Seitenergänzung: nur fehlende Feldnamen auch im Antwortschema, bekannte Fakten
+- Bereits begonnene Bestandsjobs behalten ihre separate Seitenergänzung: nur fehlende Feldnamen auch im Antwortschema, bekannte Fakten
   als kurzer Kontext, kein erneut gesendeter Mailtext oder Betreff. Null und false
   bleiben unterscheidbar. Leerer Quelltext löst keine API-Anfrage aus.
 - Bilder: Originaldaten der jeweils noch unbewerteten Auswahl, Bildindizes und
