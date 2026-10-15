@@ -6,5 +6,8 @@ function extractIdealistaImages(data) {
     ...extractHtmlImageUrls(data.html || '')
   ];
 
-  return uniqueImageUrls(candidates);
+  // Nur Inseratsfotos vom Idealista-Bilddienst, keine Logos oder App-Store-Badges.
+  return uniqueImageUrls(candidates).filter(url =>
+    /^https:\/\/img\d*\.idealista\.com\/[^?#]*\/id\.pro\.es\.image\.master\/[^?#]+\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(url)
+  );
 }
