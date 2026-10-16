@@ -635,7 +635,7 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
     email: 'Gmail', listing_page: data.ai_pipeline.page_status === 'ok' ? 'Portal-Seite' : null,
     text_extraction: data.ai_pipeline.text_source || 'legacy_separate_calls'
   });
-  data.scoring = { rent_eur: merged.rent_eur, area_m2: merged.area_m2,
+  data.scoring = { version: 2, rent_eur: merged.rent_eur, area_m2: merged.area_m2,
     eur_per_m2: merged.rent_eur && merged.area_m2 ? merged.rent_eur / merged.area_m2 : null,
     rent_points: rentPoints, distance_points: null, image_points: imagePoints,
     terrace_points: terracePoints, pool_points: poolPoints, total_points: total,
