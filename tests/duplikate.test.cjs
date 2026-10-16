@@ -56,6 +56,7 @@ function setup(listings=[]){
     decode:bytes=>image(bytes[0]===2?2:1)
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../apps-script/Duplikate.js'),'utf8'),ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../apps-script/AIProcessing.js'),'utf8'),ctx);
   return {ctx,ss,sheet,block,byName,listing};
 }
 const plain=x=>JSON.parse(JSON.stringify(x));
