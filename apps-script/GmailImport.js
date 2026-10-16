@@ -55,6 +55,11 @@ function runGmailImagePipeline() {
       CONFIG.spreadsheetId
     );
 
+    // User deletions must be honored before mail import and before any AI requests.
+    runImageDiagnosticStage('marked_deletions', () => cleanupMarkedListings_(ss));
+    // Incremental index build: no OpenAI calls; bounded work per trigger.
+    runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 3));
+
     const queue = ss.getSheetByName(
       MAIL_IMPORT.sheetName
     );
@@ -538,7 +543,7 @@ function sortListingsByMailReceived(ss) {
   const receivedIndex = headers.indexOf('Eingang (UTC)');
   if (receivedIndex < 0) throw new Error('Spalte Eingang (UTC) fehlt');
   sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn())
-    .sort([{column: receivedIndex + 1, ascending: false}]);
+    .sort([{column: receivedIndex + 1, ascending: true}]);
 }
 
 /**
