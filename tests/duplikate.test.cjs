@@ -10,9 +10,12 @@ class Sheet {
     const get=()=>Array.from({length:n},(_,i)=>Array.from({length:m},(_,j)=>this.rows[r+i-1]?.[c+j-1]??''));
     const set=arr=>{arr.forEach((row,i)=>{this.rows[r+i-1]||=[];row.forEach((v,j)=>this.rows[r+i-1][c+j-1]=v);});};
     return {getValues:get,getValue:()=>get()[0][0],setValues:set,setValue:v=>set([[v]]),
-      clearContent:()=>set(Array.from({length:n},()=>Array(m).fill(''))) };
+      clearContent:()=>set(Array.from({length:n},()=>Array(m).fill(''))),copyFormatToRange:()=>{} };
   }
   deleteRow(row){this.deleted.push(row);this.rows.splice(row-1,1);}
+  deleteColumn(column){this.rows.forEach(r=>r.splice(column-1,1));this.width--;}
+  insertColumnAfter(column){this.rows.forEach(r=>r.splice(column,0,''));this.width++;}
+
 }
 const header=['Zu löschen','Wohnungsbewertung (0–100)','Preisbewertung (0–100)','E-Mail-Eingang','Vorschaubild','Titel','Fläche','Miete','Zusammenfassung',
   'Lage zu 29001','Entfernung zu 29001 km','Richtung von 29001','Bewertungsabdeckung (%)','Merkmale','Status','Portal',
@@ -96,4 +99,35 @@ test('user-marked rows are blocked before actual row removal',()=>{
   assert.equal(sheet.rows.length,1);
   assert.equal(block.rows[1][0],'idealista:1');
   assert.equal(ctx.cleanupMarkedListings_(ss).deleted,0);
+});
+
+
+test('schema migration removes Gesehen, keeps delete flag, inserts price score and preserves all listing IDs',()=>{
+  const {ctx,ss,sheet}=setup([listing('idealista:999',['first-a'])]);
+  sheet.rows[0].splice(0,0,'Gesehen');sheet.rows[1].splice(0,0,true);sheet.width++;
+  sheet.rows[0][2]='Punkte';
+  sheet.rows[1][2]=42;
+  const originalId=sheet.rows[1][sheet.rows[0].indexOf('Datensatz-ID')];
+  const migrated=ctx.ensureListingRatingSchema_(ss);
+  assert.equal(migrated.ready,true);
+  assert.equal(sheet.rows[0][0],'Zu löschen');
+  assert.equal(sheet.rows[0][1],'Wohnungsbewertung (0–100)');
+  assert.equal(sheet.rows[0][2],'Preisbewertung (0–100)');
+  assert.equal(sheet.rows[0][3],'E-Mail-Eingang');
+  assert.equal(sheet.rows[1][0],false);
+  assert.equal(sheet.rows[1][1],'');
+  assert.equal(sheet.rows[1][2],'');
+  assert.equal(sheet.rows[1][sheet.rows[0].indexOf('Datensatz-ID')],originalId);
+  assert.equal(ctx.ensureListingRatingSchema_(ss).ready,true);
+  assert.equal(sheet.rows[0].filter(x=>x==='Preisbewertung (0–100)').length,1);
+});
+test('existing listings re-score from cached AI findings without model calls',()=>{
+  const {ctx,ss,sheet}=setup([listing('idealista:77',['first-a','second-a'])]);
+  const result=ctx.recalculateExistingListingScores_(ss,5);
+  assert.equal(result.rescored,1);
+  const values=sheet.rows[1],h=sheet.rows[0],json=JSON.parse(values[h.indexOf('Bildanalyse JSON')]);
+  assert.equal(json.scoring.version,3);
+  assert.ok(values[h.indexOf('Wohnungsbewertung (0–100)')]>=0);
+  assert.ok(values[h.indexOf('Preisbewertung (0–100)')]>=0);
+  assert.equal(ctx.recalculateExistingListingScores_(ss,5).rescored,0);
 });
