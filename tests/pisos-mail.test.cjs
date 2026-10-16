@@ -134,6 +134,7 @@ function runQueue(html, { blocked = [], oldFiles = [], failDownload = false, fet
     getImageFolder: () => ({}), processExistingListingImages: () => ({}),
     checkListingImageAvailabilityInternal() {}, updateListingPreviewsInternal() {},
     sortListingsByMailReceived() {},
+    ensureListingRatingSchema_() {return {ready:true};},
     cleanupMarkedListings_() {return {deleted:0};}, backfillDuplicateRegistry_() {return {added:0};},
     reconcileExistingDuplicates_() {return {removed:0};}, recalculateExistingListingScores_() {return {rescored:0};},
     saveListingImages(folder, id, urls) {
