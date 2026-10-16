@@ -325,3 +325,47 @@ function dedupParse_(json) {
   try{const d=JSON.parse(String(json||'{}'));return d&&typeof d==='object'&&!Array.isArray(d)?d:{};}
   catch(_){return {};}
 }
+
+
+/**
+ * Re-evaluate existing listings using saved fields and vision results only.
+ * Does not call OpenAI. Version marker prevents repeated Sheet writes.
+ */
+function recalculateExistingListingScores_(ss,maxRows) {
+  const sheet=ss.getSheetByName('Anzeigen');
+  if(!sheet||sheet.getLastRow()<2)return {rescored:0};
+  const head=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  const ci=(name)=>head.indexOf(name);
+  const names=['Datensatz-ID','Bildanalyse JSON','Punkte','Bewertungsabdeckung (%)',
+    'Terrasse Punkte','Pool Punkte','Bildbewertung Punkte','Distanz Punkte'];
+  if(names.some(n=>ci(n)<0))throw new Error('Punkteberechnung: Spalten fehlen');
+  const grid=sheet.getRange(2,1,sheet.getLastRow()-1,sheet.getLastColumn()).getValues();
+  let rescored=0;
+  for(let i=0;i<grid.length;i++){
+    if(rescored>=(maxRows||10))break;
+    const values=grid[i],id=values[ci('Datensatz-ID')];
+    if(!id)continue;
+    const data=dedupParse_(values[ci('Bildanalyse JSON')]);
+    if(!data.extracted_fields||data.scoring?.version===2)continue;
+    const facts=data.extracted_fields,score=calculateListingScore_(facts,data.image_review||{});
+    const row=i+2;
+    sheet.getRange(row,ci('Punkte')+1).setValue(score.total);
+    sheet.getRange(row,ci('Bewertungsabdeckung (%)')+1).setValue(score.coverage);
+    sheet.getRange(row,ci('Terrasse Punkte')+1).setValue(score.terracePoints===null?'':score.terracePoints);
+    sheet.getRange(row,ci('Pool Punkte')+1).setValue(score.poolPoints===null?'':score.poolPoints);
+    sheet.getRange(row,ci('Bildbewertung Punkte')+1).setValue(score.imagePoints===null?'':score.imagePoints);
+    sheet.getRange(row,ci('Distanz Punkte')+1).clearContent();
+    const excluded=values[ci('Status')]==='Ausgeschlossen';
+    if(ci('Status')>=0&&!excluded &&
+      ['Vorläufig','Geprüft'].includes(String(values[ci('Status')]||'')))
+      sheet.getRange(row,ci('Status')+1).setValue(score.coverage===100?'Geprüft':'Vorläufig');
+    data.scoring=Object.assign({},data.scoring||{},{
+      version:2, rent_points:score.rentPoints,distance_points:null,
+      image_points:score.imagePoints,terrace_points:score.terracePoints,
+      pool_points:score.poolPoints,total_points:score.total,coverage_percent:score.coverage
+    });
+    sheet.getRange(row,ci('Bildanalyse JSON')+1).setValue(JSON.stringify(data));
+    rescored++;
+  }
+  return {rescored};
+}
