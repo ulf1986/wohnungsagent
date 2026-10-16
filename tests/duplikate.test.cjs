@@ -14,7 +14,7 @@ class Sheet {
   }
   deleteRow(row){this.deleted.push(row);this.rows.splice(row-1,1);}
 }
-const header=['Gesehen','Zu löschen','Punkte','E-Mail-Eingang','Vorschaubild','Titel','Fläche','Miete','Zusammenfassung',
+const header=['Zu löschen','Wohnungsbewertung (0–100)','Preisbewertung (0–100)','E-Mail-Eingang','Vorschaubild','Titel','Fläche','Miete','Zusammenfassung',
   'Lage zu 29001','Entfernung zu 29001 km','Richtung von 29001','Bewertungsabdeckung (%)','Merkmale','Status','Portal',
   'Anzeigenlink','Anzeigendatum (Quelle)','Eingang (UTC)','Mietart / Laufzeit','Mietprüfung','Einschränkungen','Offene Angaben',
   'Terrasse Punkte','Pool Punkte','Bildbewertung Punkte','Distanz Punkte','Fläche Punkte','Gmail-Link','Datensatz-ID','Anzeigen-ID','E-Mail-ID','KI-Bewertung','Bildanalyse JSON'];
