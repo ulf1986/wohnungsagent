@@ -94,7 +94,7 @@ function processNextAiListing(ss, queue) {
   queue.getRange(target.rowNumber, index.activeId + 1).setValue(activeId);
   queue.getRange(target.rowNumber, index.listingId + 1).setValue(activeId);
   const result = processAiQueueRow_(ss, queue, target, qi, index);
-  if (['completed','no_images','blocked','unavailable'].includes(result.status)) {
+  if (['completed','no_images','blocked','unavailable','duplicate'].includes(result.status)) {
     if (!done.includes(activeId)) done.push(activeId);
     queue.getRange(target.rowNumber, index.doneIds + 1).setValue(JSON.stringify(done));
     queue.getRange(target.rowNumber, index.activeId + 1).clearContent();
@@ -127,7 +127,6 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     if (!mailId || !links.length) throw new Error('Queue-Eintrag ohne Gmail-ID oder Inseratslink.');
     if (!listingId) throw new Error('Anzeigen-ID konnte aus dem Portal-Link nicht ermittelt werden.');
     if (!listingUrl) throw new Error('Link für Anzeigen-ID fehlt: ' + listingId);
-    const config = getOpenAiConfig_();
     const sheet = ss.getSheetByName(AI_PIPELINE.listingSheetName);
     if (!sheet) throw new Error('Tabellenblatt Anzeigen fehlt.');
     const cols = getListingColumns_(sheet);
@@ -143,6 +142,17 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       setAiQueueState_(queue, rowNo, index, 'blocked', 'Datensatz-ID steht in der Sperrliste.', '');
       return { status: 'blocked', listingId };
     }
+    // Local cross-portal photo matching BEFORE portal extraction and OpenAI API requests.
+    // Known listings keep their existing assessments; duplicates do not pay for new AI.
+    const duplicateCheck = checkDuplicateBeforeAi_(ss, listingId, listingUrl, queueFiles);
+    if (duplicateCheck.status === 'duplicate' || duplicateCheck.status === 'blocked') {
+      setAiQueueState_(queue, rowNo, index,
+        duplicateCheck.status === 'duplicate' ? 'duplicate' : 'blocked',
+        'Haupteintrag: ' + duplicateCheck.canonical, '');
+      return { status: duplicateCheck.status, listingId,
+        canonicalListingId: duplicateCheck.canonical };
+    }
+    const config = getOpenAiConfig_();
     const existingRow = findListingRow_(sheet, cols, listingId, listingUrl);
     let preflightPage;
     if (!existingRow) {
