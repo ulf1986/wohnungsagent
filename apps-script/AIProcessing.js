@@ -661,27 +661,22 @@ function rentalDecision_(f) {
   return issues.length ? 'Ausschluss prüfen: ' + issues.join('; ') : f.long_term === true ? 'Langzeitmiete belegt' : 'Langzeitmiete offen';
 }
 
+/**
+ * Short, user-facing missing information only.
+ * Detailed source checks and diagnostics remain in Bildanalyse JSON.
+ * Avoid repeating rental decisions, availability and score details.
+ */
 function makeOpenFields_(data, fields) {
-  const missing = new Set([...(data.ai_pipeline.missing_fields || []), ...listingPageMissingFields_(fields)]);
-  if (data.ai_pipeline.page_status && data.ai_pipeline.page_status !== 'ok') {
-    const reason={unavailable:'Anzeige entfernt',blocked:'Zugriff gesperrt',http_error:'HTTP-Fehler',fetch_error:'Abruffehler',error:'Abruffehler',empty:'Kein auswertbarer Inhalt'}[data.ai_pipeline.page_status] || 'Antwort unklar';
-    missing.add('Portalseite: '+reason);
-  }
-  const selection = data.ai_pipeline.image_selection || data.drive_files || [];
-  if ((!data.ai_pipeline.page_check || data.ai_pipeline.page_check.status !== 'unavailable') && selection.some(f => !(data.analyzed_file_ids || []).includes(f.file_id))) missing.add('Bildanalyse unvollständig');
-  for (const key of Object.keys(fields)) if (fields[key] !== null && fields[key] !== undefined && fields[key] !== '' && !(Array.isArray(fields[key]) && !fields[key].length)) missing.delete(key);
-  if (finiteNumber_(fields.distance_km_approx) === '') missing.add('Entfernung zu 29001 nicht bestimmbar');
-  if (data.ai_pipeline.location && data.ai_pipeline.location.precision === 'street') missing.add('Lage nur auf Straßenebene bestimmt');
-  if (data.ai_pipeline.image_selection_limited) missing.add('Bildbewertung auf die ersten 10 Bilder begrenzt');
-  const labels = {title:'Titel fehlt',rent_eur:'Miete fehlt',area_m2:'Wohnfläche fehlt',rooms:'Zimmerzahl fehlt',
-    address:'Adresse fehlt',neighborhood:'Stadtviertel unbekannt',rental_type:'Mietart ungeklärt',long_term:'Langzeitmiete ungeklärt',
-    student_only:'Beschränkung auf Studierende ungeklärt',seasonal_or_short_term:'Saison- oder Kurzzeitmiete ungeklärt',
-    restrictions:'Mietbedingungen ungeklärt',terrace:'Terrasse unbekannt',pool:'Pool unbekannt',amenities:'Ausstattung unbekannt',
-    contact_email:'Kontakt-E-Mail fehlt',contact_phone:'Telefonnummer fehlt',direction:'Himmelsrichtung fehlt',distance_km_approx:'Entfernung zu 29001 fehlt'};
-  if (data.ai_pipeline.page_check && data.ai_pipeline.page_check.status !== 'matched')
-    missing.add(data.ai_pipeline.page_check.status === 'unavailable' ? 'Inserat nicht mehr verfügbar' : 'Verfügbarkeit ungeklärt');
-  if ((data.ai_pipeline.source_conflicts || []).length) missing.add('Widersprüchliche Angaben zwischen E-Mail und Inseratsseite; Mailangaben beibehalten');
-  return [...new Set([...missing].map(key=>labels[key] || (/^[a-z_]+$/.test(key) ? 'Weitere Angaben ungeklärt' : key)))].join('\n');
+  const values = fields || {};
+  const missing = value => value === null || value === undefined || value === '' ||
+    (Array.isArray(value) && value.length === 0);
+  const essential = [
+    ['rent_eur', 'Miete'],
+    ['area_m2', 'Fläche'],
+    ['rooms', 'Zimmer'],
+    ['address', 'Adresse']
+  ].filter(([key]) => missing(values[key])).map(([, label]) => label);
+  return essential.length ? 'Fehlt: ' + essential.join(', ') : '';
 }
 
 function acceptListingPageResult_(result, page, listingId, knownEmail) {
