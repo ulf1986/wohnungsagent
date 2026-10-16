@@ -58,7 +58,9 @@ function runGmailImagePipeline() {
     // User deletions must be honored before mail import and before any AI requests.
     runImageDiagnosticStage('marked_deletions', () => cleanupMarkedListings_(ss));
     // Incremental index build: no OpenAI calls; bounded work per trigger.
-    runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 3));
+    runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 6));
+    runImageDiagnosticStage('duplicate_reconcile', () => reconcileExistingDuplicates_(ss));
+    runImageDiagnosticStage('rescore_existing', () => recalculateExistingListingScores_(ss, 10));
 
     const queue = ss.getSheetByName(
       MAIL_IMPORT.sheetName
