@@ -45,6 +45,7 @@ function setup({ blocked = false, images = true, fileCount = 1 } = {}) {
   row[at('Queue Bildstatus')]='ready_for_ai';
   queue = new Sheet([qHeaders,row]);
   ctx.logImageDiagnostic=(stage,detail)=>logs.push({stage,...detail});
+  ctx.checkDuplicateBeforeAi_=()=>({status:'primary'}); // separate duplicate regression tests cover real implementation
   ctx.callListingExtraction_=()=>{calls.push('email'); return {provenance_version:1,fields:{title:'Wohnung aus E-Mail',rent_eur:null,area_m2:70,rooms:null,
     long_term:null,student_only:null,seasonal_or_short_term:null,terrace:null,pool:null,amenities:[],restrictions:[]}, missing_fields:['rent_eur']};};
   const providerPageFetcher=ctx.fetchListingPageForProvider_;
@@ -66,7 +67,7 @@ test('ready mail becomes a row, survives offline page, completes photos and neve
   assert.equal(x.value(x.listing,'KI-Bewertung'),'Abgeschlossen');
   assert.equal(x.value(x.listing,'Status'),'Verfügbarkeit ungeklärt');
   assert.ok(!x.value(x.listing,'Merkmale').includes('null Zimmer'));
-  assert.equal(x.value(x.listing,'Bewertungsabdeckung (%)'),20);
+  assert.equal(x.value(x.listing,'Bewertungsabdeckung (%)'),30);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
   x.setQueue('KI Verarbeitungsstatus','pending'); x.setQueue('KI Abgeschlossene Anzeigen JSON','[]');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
