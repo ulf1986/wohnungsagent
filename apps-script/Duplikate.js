@@ -253,3 +253,75 @@ function cleanupMarkedListings_(ss) {
   }
   return {deleted};
 }
+
+
+/**
+ * Consolidate already-imported cross-portal duplicate rows without re-running AI.
+ * Retain all alternate source URLs/IDs in both the registry and primary row JSON.
+ * Prefer the listing with most verified facts and image coverage, not the oldest.
+ */
+function reconcileExistingDuplicates_(ss) {
+  const registry=ensureDuplicateRegistry_(ss),records=readDuplicateRegistry_(registry);
+  const sheet=ss.getSheetByName('Anzeigen');
+  if(!sheet||sheet.getLastRow()<3)return {groups:0,removed:0};
+  const head=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  const col=name=>{const i=head.indexOf(name);if(i<0)throw Error('Dublettenbereinigung: Spalte fehlt '+name);return i;};
+  const idCol=col('Datensatz-ID'),urlCol=col('Anzeigenlink'),jsonCol=col('Bildanalyse JSON'),mailCol=col('E-Mail-ID');
+  const rows=sheet.getRange(2,1,sheet.getLastRow()-1,sheet.getLastColumn()).getValues();
+  const byId=new Map();
+  rows.forEach((values,i)=>{const id=String(values[idCol]||'');if(id)byId.set(id,{row:i+2,values});});
+  const groups=new Map();
+  for(const record of records){
+    const canonical=record.canonical||record.id;
+    if(record.status!=='duplicate'||!byId.has(record.id)||!byId.has(canonical))continue;
+    if(!groups.has(canonical))groups.set(canonical,new Set([canonical]));
+    groups.get(canonical).add(record.id);
+  }
+  const toDelete=[],priorities={};
+  for(const [canonical,ids] of groups){
+    const entries=[...ids].map(id=>({id,entry:byId.get(id)})).filter(e=>e.entry);
+    if(entries.length<2)continue;
+    const quality=e=>{
+      const v=e.entry.values;
+      let score=0;
+      if(v[col('Miete')]!==''&&v[col('Miete')]!==null)score+=6;
+      if(v[col('Fläche')]!==''&&v[col('Fläche')]!==null)score+=6;
+      if(v[col('Titel')]&&String(v[col('Titel')])!=='Wohnung')score+=2;
+      const data=dedupParse_(v[jsonCol]);
+      const f=data.extracted_fields||{};
+      if(f.address)score+=5;
+      if(f.long_term===true)score+=2;
+      const num=(data.ai_pipeline?.image_selection||data.drive_files||[]).length;
+      score+=Math.min(5,Math.round(Math.log2(1+num)));
+      return score;
+    };
+    entries.sort((a,b)=>quality(b)-quality(a)||a.entry.row-b.entry.row);
+    const winner=entries[0],winnerData=dedupParse_(winner.entry.values[jsonCol]);
+    const alt=Array.isArray(winnerData.alternate_portals)?winnerData.alternate_portals:[];
+    for(const item of entries){
+      if(item.id===winner.id)continue;
+      alt.push({id:item.id,url:String(item.entry.values[urlCol]||''),
+        mail_id:String(item.entry.values[mailCol]||'')});
+      toDelete.push({id:item.id,row:item.entry.row});
+    }
+    winnerData.alternate_portals=[...new Map(alt.filter(a=>a.id&&a.url).map(a=>[a.id,a])).values()];
+    sheet.getRange(winner.entry.row,jsonCol+1).setValue(JSON.stringify(winnerData));
+    for(const record of records.filter(r=>ids.has(r.id))){
+      const nextStatus=record.id===winner.id?'primary':'duplicate';
+      saveDuplicateRecord_(registry,record.id,winner.id,nextStatus,record.photos,
+        [...record.sources,...winnerData.alternate_portals.map(a=>({id:a.id,url:a.url})),
+          {id:winner.id,url:String(winner.entry.values[urlCol]||'')}],'Konsolidiert in '+winner.id);
+    }
+    priorities[winner.id]=entries.length;
+  }
+  for(const item of toDelete.sort((a,b)=>b.row-a.row)){
+    if(String(sheet.getRange(item.row,idCol+1).getValue()||'')!==item.id)
+      throw new Error('Dubletten-Zeile wurde verschoben: '+item.id);
+    sheet.deleteRow(item.row);
+  }
+  return {groups:Object.keys(priorities).length,removed:toDelete.length};
+}
+function dedupParse_(json) {
+  try{const d=JSON.parse(String(json||'{}'));return d&&typeof d==='object'&&!Array.isArray(d)?d:{};}
+  catch(_){return {};}
+}
