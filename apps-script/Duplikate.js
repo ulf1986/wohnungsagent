@@ -341,6 +341,50 @@ function dedupParse_(json) {
 
 
 /**
+ * Idempotent live migration. Deliberately runs only after deploying the
+ * matching code, before all other five-minute pipeline stages.
+ *
+ * Old columns: A=Gesehen, B=Zu löschen, C=Punkte, D=E-Mail-Eingang.
+ * New columns: A=Zu löschen, B=Wohnungsbewertung (0–100),
+ * C=Preisbewertung (0–100), D=E-Mail-Eingang.
+ * No other column needs to shift in its final position.
+ */
+function ensureListingRatingSchema_(ss) {
+  const sheet=ss.getSheetByName('Anzeigen');
+  if(!sheet)throw new Error('Pflichtblatt Anzeigen fehlt');
+  let heads=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  const home='Wohnungsbewertung (0–100)',price='Preisbewertung (0–100)';
+  if(heads[0]==='Gesehen'){
+    if(heads[1]!=='Zu löschen')throw new Error('Nicht erkannte Anzeigenstruktur, Spalte Gesehen bleibt unverändert');
+    sheet.deleteColumn(1); // Preserve "Zu löschen" checkbox including validation.
+    heads=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  }
+  if(heads[0]!=='Zu löschen')throw new Error('Zu löschen muss die erste Spalte sein');
+  if(heads[1]==='Punkte'){
+    sheet.getRange(1,2).setValue(home);
+    heads[1]=home;
+  }
+  if(heads[1]!==home)throw new Error('Wohnungsbewertung: unerwartete zweite Spalte');
+  if(heads[2]!==price){
+    if(heads[2]==='E-Mail-Eingang'){
+      sheet.insertColumnAfter(2);
+      sheet.getRange(1,3).setValue(price);
+      // Format second score column consistently with first.
+      sheet.getRange(1,2).copyFormatToRange(sheet,3,3,1,1);
+      const end=Math.max(2,sheet.getLastRow());
+      sheet.getRange(2,2,end-1,1).copyFormatToRange(sheet,3,3,2,end);
+      // Old mixed scores must never be presented as the new home rating.
+      sheet.getRange(2,2,end-1,2).clearContent();
+    }else throw new Error('Preisbewertung: unerwartete dritte Spalte');
+  }
+  // Sanity-check the exact resulting columns before downstream processing.
+  heads=sheet.getRange(1,1,1,4).getValues()[0];
+  if(heads.join('|')!==['Zu löschen',home,price,'E-Mail-Eingang'].join('|'))
+    throw new Error('Bewertungsspaltenmigration nicht abgeschlossen');
+  return {ready:true};
+}
+
+/**
  * Re-evaluate existing listings using saved fields and vision results only.
  * Does not call OpenAI. Version marker prevents repeated Sheet writes.
  */
@@ -348,10 +392,12 @@ function recalculateExistingListingScores_(ss,maxRows) {
   const sheet=ss.getSheetByName('Anzeigen');
   if(!sheet||sheet.getLastRow()<2)return {rescored:0};
   const head=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
-  const ci=(name)=>head.indexOf(name);
-  const names=['Datensatz-ID','Bildanalyse JSON','Punkte','Bewertungsabdeckung (%)',
-    'Terrasse Punkte','Pool Punkte','Bildbewertung Punkte','Distanz Punkte'];
-  if(names.some(n=>ci(n)<0))throw new Error('Punkteberechnung: Spalten fehlen');
+  const ci=name=>head.indexOf(name);
+  const names=['Datensatz-ID','Bildanalyse JSON','Wohnungsbewertung (0–100)',
+    'Preisbewertung (0–100)','Bewertungsabdeckung (%)',
+    'Terrasse Punkte','Pool Punkte','Bildbewertung Punkte','Distanz Punkte',
+    'Miete','Fläche'];
+  if(names.some(n=>ci(n)<0))throw new Error('Zwei Bewertungen: Spalten fehlen');
   const grid=sheet.getRange(2,1,sheet.getLastRow()-1,sheet.getLastColumn()).getValues();
   let rescored=0;
   for(let i=0;i<grid.length;i++){
@@ -359,23 +405,32 @@ function recalculateExistingListingScores_(ss,maxRows) {
     const values=grid[i],id=values[ci('Datensatz-ID')];
     if(!id)continue;
     const data=dedupParse_(values[ci('Bildanalyse JSON')]);
-    if(!data.extracted_fields||data.scoring?.version===2)continue;
-    const facts=data.extracted_fields,score=calculateListingScore_(facts,data.image_review||{});
+    if(data.scoring?.version===3)continue;
+    // Existing facts and image reviews are reused; never request OpenAI.
+    const facts=Object.assign({},data.extracted_fields||{});
+    if((facts.rent_eur===null||facts.rent_eur===undefined||facts.rent_eur==='')&&
+      values[ci('Miete')]!=='')facts.rent_eur=values[ci('Miete')];
+    if((facts.area_m2===null||facts.area_m2===undefined||facts.area_m2==='')&&
+      values[ci('Fläche')]!=='')facts.area_m2=values[ci('Fläche')];
+    const score=calculateListingScore_(facts,data.image_review||{});
     const row=i+2;
-    sheet.getRange(row,ci('Punkte')+1).setValue(score.total);
+    sheet.getRange(row,ci('Wohnungsbewertung (0–100)')+1,1,2).setValues([[
+      score.homeScore===null?'':score.homeScore,
+      score.priceScore===null?'':score.priceScore
+    ]]);
     sheet.getRange(row,ci('Bewertungsabdeckung (%)')+1).setValue(score.coverage);
     sheet.getRange(row,ci('Terrasse Punkte')+1).setValue(score.terracePoints===null?'':score.terracePoints);
     sheet.getRange(row,ci('Pool Punkte')+1).setValue(score.poolPoints===null?'':score.poolPoints);
     sheet.getRange(row,ci('Bildbewertung Punkte')+1).setValue(score.imagePoints===null?'':score.imagePoints);
     sheet.getRange(row,ci('Distanz Punkte')+1).clearContent();
-    const excluded=values[ci('Status')]==='Ausgeschlossen';
-    if(ci('Status')>=0&&!excluded &&
-      ['Vorläufig','Geprüft'].includes(String(values[ci('Status')]||'')))
-      sheet.getRange(row,ci('Status')+1).setValue(score.coverage===100?'Geprüft':'Vorläufig');
     data.scoring=Object.assign({},data.scoring||{},{
-      version:2, rent_points:score.rentPoints,distance_points:null,
+      version:3,home_score:score.homeScore,price_score:score.priceScore,
+      rent_points:score.priceScore,distance_points:null,
       image_points:score.imagePoints,terrace_points:score.terracePoints,
-      pool_points:score.poolPoints,total_points:score.total,coverage_percent:score.coverage
+      pool_points:score.poolPoints,total_points:null,coverage_percent:score.coverage,
+      eur_per_m2:(Number(facts.area_m2)>0&&Number(facts.rent_eur)>0)
+        ?Number(facts.rent_eur)/Number(facts.area_m2):null,
+      provisional:score.coverage<100
     });
     sheet.getRange(row,ci('Bildanalyse JSON')+1).setValue(JSON.stringify(data));
     rescored++;
