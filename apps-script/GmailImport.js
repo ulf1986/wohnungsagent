@@ -55,6 +55,9 @@ function runGmailImagePipeline() {
       CONFIG.spreadsheetId
     );
 
+    // Migrate legacy columns before any code reads or writes listing headers.
+    runImageDiagnosticStage('rating_columns', () => ensureListingRatingSchema_(ss));
+
     // User deletions must be honored before mail import and before any AI requests.
     runImageDiagnosticStage('marked_deletions', () => cleanupMarkedListings_(ss));
     // Incremental index build: no OpenAI calls; bounded work per trigger.
