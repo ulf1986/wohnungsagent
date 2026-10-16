@@ -97,9 +97,10 @@ test('technical deletion overrides a hallucinated AI match and retains mail fact
     page_check:{status:'matched',matched_listing_id:'fotocasa:123'}},{status:'unavailable',error:'HTTP 404'},'fotocasa:123');
   assert.equal(r.pageCheck.status,'unavailable');assert.equal(r.fields.rent_eur,950);assert.equal(r.fields.pool,undefined);
 });
-test('open fields are German readable lines and remove facts filled from accepted page',()=>{
+test('open fields remain short and show only essential missing facts',()=>{
   const x=setup(),text=x.ctx.makeOpenFields_({ai_pipeline:{missing_fields:['terrace','long_term','distance_km_approx'],page_status:'ok',page_check:{status:'unclear'}},analyzed_file_ids:[]},{terrace:false});
-  assert.match(text,/Langzeitmiete ungeklärt/);assert.match(text,/Entfernung/);assert.match(text,/\n/);assert.ok(!text.includes('long_term'));assert.ok(!text.includes('Terrasse unbekannt'));
+  assert.equal(text,'Fehlt: Miete, Fläche, Zimmer, Adresse');
+  assert.equal(x.ctx.makeOpenFields_({}, {rent_eur:950,area_m2:80,rooms:2,address:'Calle Ejemplo'}),'');
 });
 test('distance is calculated from reference to listing, with correct cardinal direction',()=>{
   const x=setup();
