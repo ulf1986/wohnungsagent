@@ -16,7 +16,7 @@ class Sheet {
     return { getValues:get, getValue:()=>get()[0][0], setValues:set, setValue:v=>set([[v]]), clearContent:()=>set(Array.from({length:n},()=>Array(m).fill(''))) };
   }
 }
-const headers = ['Gesehen','Zu löschen','Punkte','E-Mail-Eingang','Vorschaubild','Titel','Fläche','Miete','Zusammenfassung',
+const headers = ['Zu löschen','Wohnungsbewertung (0–100)','Preisbewertung (0–100)','E-Mail-Eingang','Vorschaubild','Titel','Fläche','Miete','Zusammenfassung',
   'Lage zu 29001','Entfernung zu 29001 km','Richtung von 29001','Bewertungsabdeckung (%)','Merkmale','Status','Portal','Anzeigenlink',
   'Anzeigendatum (Quelle)','Eingang (UTC)','Mietart / Laufzeit','Mietprüfung','Einschränkungen','Offene Angaben',
   'Terrasse Punkte','Pool Punkte','Bildbewertung Punkte','Distanz Punkte','Fläche Punkte','Gmail-Link','Datensatz-ID','Anzeigen-ID',
@@ -24,7 +24,7 @@ const headers = ['Gesehen','Zu löschen','Punkte','E-Mail-Eingang','Vorschaubild
 
 function setup({ blocked = false, images = true, fileCount = 1 } = {}) {
   const calls = [], logs = [], props = new Map([['OPENAI_API_KEY','test-key'],['OPENAI_MODEL','test-model']]);
-  const listing = new Sheet([headers, [false,false], [false,false]]);
+  const listing = new Sheet([headers, [false], [false]]);
   const blacklist = new Sheet([['Sperrliste Datensatz-ID'], ...(blocked ? [['idealista:123']] : [])]);
   let queue;
   const ss = { getSheetByName: name => ({ Anzeigen:listing, Verarbeitung:queue, Sperrliste:blacklist }[name]) };
@@ -67,7 +67,7 @@ test('ready mail becomes a row, survives offline page, completes photos and neve
   assert.equal(x.value(x.listing,'KI-Bewertung'),'Abgeschlossen');
   assert.equal(x.value(x.listing,'Status'),'Verfügbarkeit ungeklärt');
   assert.ok(!x.value(x.listing,'Merkmale').includes('null Zimmer'));
-  assert.equal(x.value(x.listing,'Bewertungsabdeckung (%)'),30);
+  assert.equal(x.value(x.listing,'Bewertungsabdeckung (%)'),85);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
   x.setQueue('KI Verarbeitungsstatus','pending'); x.setQueue('KI Abgeschlossene Anzeigen JSON','[]');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
@@ -124,7 +124,7 @@ test('existing unavailable row is cleared only after confirmed blacklist write',
   x.listing.rows[1][headers.indexOf('Bildanalyse JSON')]=JSON.stringify(data);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'unavailable');
   assert.equal(x.value(x.listing,'Datensatz-ID'),'');
-  assert.equal(x.value(x.listing,'Gesehen'),false);
+  assert.equal(x.value(x.listing,'Zu löschen'),false);
   assert.equal(x.value(x.blacklist,'Sperrliste Datensatz-ID'),'idealista:123');
   assert.equal(x.blacklist.rows.length,2);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
