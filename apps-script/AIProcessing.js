@@ -515,7 +515,7 @@ function callImageReview_(config, batch, previousReviews) {
   const schema = { type: 'object', additionalProperties: false, properties: {
     images: { type: 'array', items: itemSchema }, summary: { type: 'string' }
   }, required: ['images','summary'] };
-  const prompt = 'Bewerte ausschließlich die tatsächlich angehängten Wohnungsfotos. Für jedes Foto sind brightness, space, furniture_condition und care_renovation ganze Zahlen von 0 bis 5. Helligkeit berücksichtigt Fenster/Tageslicht. space bewertet breit/offen gegenüber tunnelartig. furniture_condition bewertet sichtbare Möbel; bei unmöblierter Wohnung bewerte stattdessen Zustand der sichtbaren Einbauten, ohne Leere automatisch abzuwerten. care_renovation bewertet Pflege und Renovierungsbedarf. Berücksichtige sichtbares Grün/Ausblick und Küchenfarbe/-alter in den Beschreibungen. Markiere Weitwinkel oder künstliche Aufhellung als Unsicherheit. Keine Ausstattung behaupten, die nicht sichtbar ist. Schreibe eine knappe deutsche Zusammenfassung nur der Bildbewertung. Frühere Bildbeobachtungen als Kontext: ' + JSON.stringify(previousReviews.map(x => ({ brightness:x.brightness,space:x.space,furniture_condition:x.furniture_condition,care_renovation:x.care_renovation,greenery_view:x.greenery_view,kitchen:x.kitchen,room_shape:x.room_shape,evidence:x.evidence }))) + '. Gib für jedes aktuelle Bild genau einen Eintrag mit dessen Index aus.';
+  const prompt = 'Bewerte ausschließlich die tatsächlich angehängten Wohnungsfotos. Für jedes Foto sind brightness, space, furniture_condition und care_renovation ganze Zahlen von 0 bis 5. Helligkeit berücksichtigt Fenster/Tageslicht. space bewertet breit/offen gegenüber tunnelartig. furniture_condition bewertet moderne, harmonische und neutrale Ausstattung: helle oder dezent gestaltete Räume bevorzugen, alte braune Küchen und stark schrille Möbel-/Wandfarben abwerten. Leere, gepflegte Räume sind ausdrücklich positiv (4–5 Punkte) und besser als altmodisch oder grell möblierte Räume; keine Ausstattung erfinden. care_renovation bewertet Pflege, sichtbare Einbauten und Renovierungsbedarf. Berücksichtige sichtbares Grün/Ausblick und Küchenfarbe/-alter in den Beschreibungen. Markiere Weitwinkel oder künstliche Aufhellung als Unsicherheit. Keine Ausstattung behaupten, die nicht sichtbar ist. Schreibe eine knappe deutsche Zusammenfassung nur der Bildbewertung. Frühere Bildbeobachtungen als Kontext: ' + JSON.stringify(previousReviews.map(x => ({ brightness:x.brightness,space:x.space,furniture_condition:x.furniture_condition,care_renovation:x.care_renovation,greenery_view:x.greenery_view,kitchen:x.kitchen,room_shape:x.room_shape,evidence:x.evidence }))) + '. Gib für jedes aktuelle Bild genau einen Eintrag mit dessen Index aus.';
   const content = [{ type: 'input_text', text: 'Alle frei formulierten Ausgaben einschließlich Bildbeschreibungen, Belegen und Zusammenfassung immer auf Deutsch. JSON-Feldnamen unverändert lassen. ' + prompt }];
   for (let i = 0; i < batch.length; i++) {
     const blob = DriveApp.getFileById(batch[i].file_id).getBlob();
@@ -591,24 +591,20 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   const image = data.image_review || {};
   const merged = mergeMissingOnly_(emailFields || {}, data.ai_pipeline.page_fields || {});
   populateListingLocation_(merged,data);
-  const rentPoints = scoreRentPerM2_(merged.rent_eur, merged.area_m2);
-  const distancePoints = scoreDistanceKm_(merged.distance_km_approx);
-  const imagePoints = Number.isInteger(image.total) ? image.total : null;
-  const terracePoints = typeof merged.terrace === 'boolean' ? (merged.terrace ? 10 : 0) : null;
-  const poolPoints = typeof merged.pool === 'boolean' ? (merged.pool ? 5 : 0) : null;
-  const scores = [rentPoints, distancePoints, imagePoints, terracePoints, poolPoints];
-  const weights = [40,25,20,10,5];
-  let total = 0, coverage = 0;
-  scores.forEach((value, i) => { if (Number.isInteger(value)) { total += value; coverage += weights[i]; } });
+  const score = calculateListingScore_(merged, image);
+  const rentPoints = score.rentPoints, imagePoints = score.imagePoints;
+  const terracePoints = score.terracePoints, poolPoints = score.poolPoints;
+  const total = score.total, coverage = score.coverage;
   setListingValue_(sheet,row,cols,'Punkte',total);
   setListingValue_(sheet,row,cols,'Bewertungsabdeckung (%)',coverage);
+  // Location remains descriptive only; it has no influence on points.
   setListingValue_(sheet,row,cols,'Entfernung zu 29001 km',finiteNumber_(merged.distance_km_approx));
   setListingValue_(sheet,row,cols,'Richtung von 29001',merged.direction || '');
   setListingValue_(sheet,row,cols,'Lage zu 29001',formatLocation_(merged.direction, merged.distance_km_approx) || 'Lage nicht eindeutig bestimmbar');
   setListingValue_(sheet,row,cols,'Terrasse Punkte',terracePoints === null ? '' : terracePoints);
   setListingValue_(sheet,row,cols,'Pool Punkte',poolPoints === null ? '' : poolPoints);
   setListingValue_(sheet,row,cols,'Bildbewertung Punkte',imagePoints === null ? '' : imagePoints);
-  setListingValue_(sheet,row,cols,'Distanz Punkte',distancePoints === null ? '' : distancePoints);
+  setListingValue_(sheet,row,cols,'Distanz Punkte','');
   setListingValue_(sheet,row,cols,'Fläche Punkte','');
   setListingValue_(sheet,row,cols,'Zusammenfassung',
     (data.ai_pipeline.image_selection_legacy_count > AI_PIPELINE.maxImagesPerListing
@@ -631,7 +627,7 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   });
   data.scoring = { rent_eur: merged.rent_eur, area_m2: merged.area_m2,
     eur_per_m2: merged.rent_eur && merged.area_m2 ? merged.rent_eur / merged.area_m2 : null,
-    rent_points: rentPoints, distance_points: distancePoints, image_points: imagePoints,
+    rent_points: rentPoints, distance_points: null, image_points: imagePoints,
     terrace_points: terracePoints, pool_points: poolPoints, total_points: total,
     coverage_percent: coverage, provisional: coverage < 100 };
   data.ai_analysis_status = 'completed';
@@ -639,13 +635,35 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   writeListingJson_(sheet,row,cols,data);
 }
 
-function scoreRentPerM2_(rent, area) {
-  if (rent === null || rent === undefined || rent === '' || area === null || area === undefined || area === '' || !Number.isFinite(Number(rent)) || !Number.isFinite(Number(area)) || Number(area) <= 0) return null;
-  return Math.round(Math.max(0, Math.min(40, 40 * (20 - Number(rent) / Number(area)) / 10)));
+/**
+ * Stable integer 0..100 score; unknown values reduce coverage, not points.
+ * 55: rent per m²; 30: visual impression; 10: terrace; 5: pool.
+ * Location is deliberately excluded.
+ */
+function calculateListingScore_(fields, image) {
+  const f = fields || {}, img = image || {};
+  const rentPoints = scoreRentPerM2_(f.rent_eur, f.area_m2);
+  const imagePoints = img.images_actually_viewed > 0 && ['brightness','space','furniture_condition','care_renovation'].every(k => Number.isFinite(Number(img[k])))
+    ? Math.round((10 * Number(img.brightness) + 9 * Number(img.space) +
+        8 * Number(img.furniture_condition) + 3 * Number(img.care_renovation)) / 5)
+    : null;
+  const terracePoints = typeof f.terrace === 'boolean' ? (f.terrace ? 10 : 0) : null;
+  const poolPoints = typeof f.pool === 'boolean' ? (f.pool ? 5 : 0) : null;
+  const scores = [rentPoints, imagePoints, terracePoints, poolPoints];
+  const weights = [55, 30, 10, 5];
+  let total = 0, coverage = 0;
+  scores.forEach((points, i) => {
+    if (Number.isInteger(points)) { total += points; coverage += weights[i]; }
+  });
+  return { rentPoints, imagePoints, terracePoints, poolPoints, total, coverage };
 }
-function scoreDistanceKm_(km) {
-  if (km === null || km === undefined || km === '' || !Number.isFinite(Number(km)) || Number(km) < 0) return null;
-  return Math.round(Math.max(0, Math.min(25, 25 * (8 - Number(km)) / 7)));
+function scoreRentPerM2_(rent, area) {
+  if (rent === null || rent === undefined || rent === '' ||
+      area === null || area === undefined || area === '' ||
+      !Number.isFinite(Number(rent)) || !Number.isFinite(Number(area)) ||
+      Number(area) <= 0) return null;
+  return Math.round(Math.max(0, Math.min(55,
+    55 * (20 - Number(rent) / Number(area)) / 10)));
 }
 function formatLocation_(direction, km) {
   if (!direction || finiteNumber_(km) === '') return '';
