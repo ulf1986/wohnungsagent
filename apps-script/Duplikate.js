@@ -214,44 +214,57 @@ function cleanupMarkedListings_(ss) {
   const head=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
   const del=head.indexOf('Zu löschen'),idcol=head.indexOf('Datensatz-ID'),urlcol=head.indexOf('Anzeigenlink');
   if(Math.min(del,idcol,urlcol)<0)throw new Error('Löschspalten fehlen');
-  const values=sheet.getRange(2,1,sheet.getLastRow()-1,sheet.getLastColumn()).getValues();
-  const existing=readMailImageBlacklist(ss),marked=[];
-  for(let i=0;i<values.length;i++){
-    const r=values[i],flag=r[del];
-    if(flag!==true&&String(flag).toUpperCase()!=='TRUE')continue;
-    const id=String(r[idcol]||'').trim(),url=String(r[urlcol]||'').trim();
-    if(!id||!url)throw new Error('Markierte Anzeige ohne ID oder URL in Zeile '+(i+2));
-    marked.push({row:i+2,id,url});
-  }
+  const rows=sheet.getRange(2,1,sheet.getLastRow()-1,sheet.getLastColumn()).getValues();
+  const marked=rows.map((r,i)=>({row:i+2,id:String(r[idcol]||'').trim(),
+    url:String(r[urlcol]||'').trim(),flag:r[del]}))
+    .filter(r=>r.flag===true||String(r.flag).toUpperCase()==='TRUE');
+  if(!marked.length)return {deleted:0};
+  for(const item of marked)if(!item.id||!item.url)
+    throw new Error('Markierte Anzeige ohne ID oder URL in Zeile '+item.row);
+  const registry=ensureDuplicateRegistry_(ss),records=readDuplicateRegistry_(registry);
+  const linked=new Map(marked.map(x=>[x.id,x]));
+  // User blocking one primary blocks all confirmed cross-portal aliases.
+  const allBlocked=new Map();
   for(const item of marked){
-    if(!existing.has(item.id.toLowerCase())){
-      const next=blacklist.getLastRow()+1;
-      blacklist.getRange(next,1,1,3).setValues([[
-        item.id,item.url,'Vom Nutzer über Zu löschen gesperrt am '+new Date().toISOString()
-      ]]);
-      SpreadsheetApp.flush();
-      if(String(blacklist.getRange(next,1).getValue())!==item.id)
-        throw new Error('Sperrliste nicht bestätigt; Anzeige bleibt erhalten');
-      existing.add(item.id.toLowerCase());
-    }
-  }
-  const registry=ensureDuplicateRegistry_(ss);
-  const rec=readDuplicateRegistry_(registry);
-  for(const item of marked){
-    for(const other of rec){
-      if(other.id===item.id||other.canonical===item.id){
-        saveDuplicateRecord_(registry,other.id,item.id,'blocked',other.photos,other.sources,'Vom Nutzer ausgeschlossen');
+    const origin=records.find(r=>r.id===item.id);
+    const canonical=origin?.canonical||item.id;
+    allBlocked.set(item.id,{id:item.id,url:item.url,canonical});
+    for(const entry of records.filter(r=>r.id===canonical||r.canonical===canonical)){
+      const url=entry.sources.find(s=>s.id===entry.id)?.url||
+        rows.find(r=>String(r[idcol]||'')===entry.id)?.[urlcol]||'';
+      if(url)allBlocked.set(entry.id,{id:entry.id,url:String(url),canonical});
+      const visible=rows.findIndex(r=>String(r[idcol]||'')===entry.id);
+      if(visible>=0&&!linked.has(entry.id)){
+        const live=rows[visible];
+        linked.set(entry.id,{row:visible+2,id:entry.id,url:String(live[urlcol]||'')});
       }
     }
   }
+  const existing=readMailImageBlacklist(ss);
+  // Write and confirm the entire property group BEFORE removing any visible rows.
+  for(const item of allBlocked.values()){
+    if(existing.has(item.id.toLowerCase()))continue;
+    const next=blacklist.getLastRow()+1;
+    blacklist.getRange(next,1,1,3).setValues([[
+      item.id,item.url,'Vom Nutzer über Zu löschen ausgeschlossen; Objekt '+item.canonical
+    ]]);
+    SpreadsheetApp.flush();
+    if(String(blacklist.getRange(next,1).getValue())!==item.id)
+      throw new Error('Sperrliste nicht bestätigt; Anzeige bleibt erhalten');
+    existing.add(item.id.toLowerCase());
+  }
+  for(const entry of records){
+    const blocked=allBlocked.get(entry.id);
+    if(blocked)saveDuplicateRecord_(registry,entry.id,blocked.canonical,
+      'blocked',entry.photos,entry.sources,'Vom Nutzer ausgeschlossen');
+  }
   let deleted=0;
-  for(const item of marked.sort((a,b)=>b.row-a.row)){
-    // No row may be removed if sorting changed the identity unexpectedly.
-    const live=String(sheet.getRange(item.row,idcol+1).getValue()||'');
-    if(live!==item.id)throw new Error('Zeilenidentität geändert; nicht löschen: '+item.id);
+  for(const item of [...linked.values()].sort((a,b)=>b.row-a.row)){
+    if(String(sheet.getRange(item.row,idcol+1).getValue()||'')!==item.id)
+      throw new Error('Zeilenidentität geändert; nicht löschen: '+item.id);
     sheet.deleteRow(item.row);deleted++;
   }
-  return {deleted};
+  return {deleted,blockedIds:allBlocked.size};
 }
 
 
