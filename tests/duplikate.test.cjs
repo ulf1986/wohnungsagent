@@ -104,6 +104,8 @@ test('user-marked rows are blocked before actual row removal',()=>{
 
 test('schema migration removes Gesehen, keeps delete flag, inserts price score and preserves all listing IDs',()=>{
   const {ctx,ss,sheet}=setup([listing('idealista:999',['first-a'])]);
+  // Recreate the exact pre-migration layout: Gesehen | Zu löschen | Punkte | E-Mail-Eingang.
+  sheet.deleteColumn(3);
   sheet.rows[0].splice(0,0,'Gesehen');sheet.rows[1].splice(0,0,true);sheet.width++;
   sheet.rows[0][2]='Punkte';
   sheet.rows[1][2]=42;
