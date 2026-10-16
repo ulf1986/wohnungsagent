@@ -62,11 +62,13 @@ function getImageDiagnosticProvider(detail) {
 function logImageDiagnostic(stage, detail) {
   try {
     const input = detail || {}, details = {};
-    const fields = ['source_url', 'file_id', 'http_status', 'mime', 'bytes', 'count', 'links',
+    const fields = ['source_url', 'initial_url', 'redirect_url', 'final_url', 'hop',
+      'file_id', 'http_status', 'mime', 'bytes', 'count', 'links',
       'images', 'files', 'uploaded', 'row', 'expected_id', 'observed_id',
       'expected_email_id', 'observed_email_id', 'error', 'reason', 'dropped', 'errors'];
     for (const name of fields) {
-      if (input[name] !== undefined) details[name] = safeImageDiagnosticValue(input[name]);
+      if (input[name] !== undefined) details[name] = safeImageDiagnosticValue(
+        /_url$/.test(name) ? String(input[name]).split(/[?#]/)[0] : input[name]);
     }
     if (input.source_url) {
       let hash = 2166136261;

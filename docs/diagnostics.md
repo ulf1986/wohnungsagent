@@ -83,6 +83,37 @@ URL-Querys, URL-Fragmente, Bearer-Tokens und API-Key-Muster werden entfernt.
 source_key erlaubt den Abgleich von Ereignissen derselben ursprünglichen
 Bild-URL, ohne deren Query-Parameter zu speichern.
 
+## Seitenabruf und Weiterleitungen für alle Portale
+
+Der gemeinsame Seitenabruf protokolliert für Idealista, Fotocasa, Pisos,
+Yaencontre, ImmoScout und Milanuncios dieselben Ereignisse in der Laufdatei:
+
+- `ai_page_start`: ursprüngliche Adresse (`initial_url`).
+- `ai_page_request`: angefragte Adresse (`source_url`) und laufende
+  Anfragenummer (`hop`, ab 1), auch wenn der Abruf anschließend fehlschlägt.
+- `ai_page_http`: HTTP-Status jeder erhaltenen Antwort.
+- `ai_page_redirect`: HTTP-Status, Ausgangsadresse und aufgelöstes Ziel
+  (`redirect_url`). Unklare Ziele werden als `rejected` protokolliert.
+- `ai_page_result`: Abschlussstatus, ursprüngliche und letzte Adresse
+  (`final_url`), Anzahl tatsächlich gestarteter Anfragen (`count`) und
+  gegebenenfalls der Fehlergrund. Die letzte Adresse kann ein abgelehntes,
+  nicht aufgerufenes Ziel sein; maßgeblich sind die `ai_page_request`-Ereignisse.
+
+Alle Ereignisse tragen Portal, Lauf-ID und die erkannte Inserats-ID.
+URL-Parameter und Fragmente werden auch bei relativen Zielen entfernt.
+Seiten-HTML, Cookies oder Antwort-Header werden nicht im Log gespeichert.
+
+Beispiel: `ai_page_http` mit 302 bei `hop: 1`, gefolgt von
+`ai_page_redirect` und HTTP 403 bei `hop: 2`, zeigt eine Zugriffssperre nach
+einer Weiterleitung. Eine direkte 403 hat nur eine Anfrage. `blocked` bedeutet
+hier einen nicht zugänglichen Abruf, keine bestätigte Löschung der Anzeige.
+
+Das bestehende Verhalten bleibt erhalten: höchstens fünf Abrufversuche,
+Weiterleitungen nur innerhalb der jeweiligen Portaldomain und keine Ausführung
+von JavaScript-Weiterleitungen. 403/429/503 bleiben ungeklärt; nur bestätigte
+Nichtverfügbarkeit führt zur Sperrliste. Der neue Stand muss manuell deployt
+werden; erst spätere Abrufe erzeugen diese Ereignisse.
+
 ## Lesender Bestandscheck
 
 Im Apps-Script-Editor **runImageDiagnostics** ausführen. Die Funktion liest

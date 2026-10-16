@@ -83,6 +83,25 @@ test('provider and component distinguish converters from pipeline in the same fi
   assert.ok(!files[0].content.includes('token=secret'));
 });
 
+test('page redirect diagnostics persist sanitized URLs and HTTP status in the run file', () => {
+  const { ctx, files } = context();
+  ctx.beginImageDiagnostics('test');
+  ctx.logImageDiagnostic('ai_page_redirect', {provider:'yaencontre',listing_id:'yaencontre:123',
+    initial_url:'https://www.yaencontre.com/listing/123?token=secret',
+    source_url:'https://www.yaencontre.com/listing/123?token=secret',
+    redirect_url:'/canonical/123?token=secret#private',
+    final_url:'https://www.yaencontre.com/canonical/123?token=secret',hop:2,http_status:302});
+  ctx.finishImageDiagnostics();
+  const event=files[0].content.trim().split('\n').map(JSON.parse)[1];
+  assert.equal(event.component,'pipeline');assert.equal(event.provider,'yaencontre');
+  assert.equal(event.listing_id,'yaencontre:123');assert.equal(event.details.hop,2);
+  assert.equal(event.details.http_status,302);
+  assert.equal(event.details.initial_url,'https://www.yaencontre.com/listing/123');
+  assert.equal(event.details.redirect_url,'/canonical/123');
+  assert.equal(event.details.final_url,'https://www.yaencontre.com/canonical/123');
+  assert.ok(!files[0].content.includes('secret'));assert.ok(!files[0].content.includes('private'));
+});
+
 test('provider inference rejects foreign hosts and resets between mail contexts', () => {
   const { ctx } = context();
   assert.equal(ctx.getImageDiagnosticProvider({ source_url: 'https://pisos.com.evil.test/x' }), 'unknown');

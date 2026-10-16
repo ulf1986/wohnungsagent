@@ -2,16 +2,55 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const url='https://www.fotocasa.es/es/alquiler/vivienda/malaga/x/123/d';
-function setup(responses={}) {
-  const calls=[],ctx=vm.createContext({
-    normalizeProvider:()=> 'fotocasa',
+function setup(responses={},provider='fotocasa') {
+  const calls=[],events=[],ctx=vm.createContext({
+    normalizeProvider:()=> provider,
     getMailListingId:u=>{const m=String(u||'').match(/^https:\/\/(?:www\.)?fotocasa\.es\/.*\/(\d+)\/d(?:[?#]|$)/);return m?'fotocasa:'+m[1]:null;},
     UrlFetchApp:{fetch:(u,options)=>{calls.push(u);assert.equal(options.followRedirects,false);const r=responses[u];if(!r)throw new Error('unexpected URL');return {getResponseCode:()=>r.code||200,getContentText:()=>r.html||'',getAllHeaders:()=>r.headers||{}};}},
-    logImageDiagnostic(){}
+    logImageDiagnostic(stage,detail){events.push({stage,...detail});}
   });
   for(const name of ['AiInput','AIProcessing'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../apps-script/'+name+'.js'),'utf8'),ctx);
-  return {ctx,calls};
+  return {ctx,calls,events};
 }
+
+test('all six portals log redirect chains and distinguish direct from redirected 403',()=>{
+  const portals={idealista:'idealista.com',fotocasa:'fotocasa.es',pisos:'pisos.com',
+    yaencontre:'yaencontre.com',immoscout:'immobilienscout24.de',milanuncios:'milanuncios.com'};
+  for(const [provider,domain] of Object.entries(portals)){
+    const start='https://www.'+domain+'/listing/123',target='https://www.'+domain+'/canonical/123';
+    const x=setup({[start]:{code:301,headers:{Location:'/canonical/123'}},[target]:{code:403}},provider);
+    assert.equal(x.ctx.fetchListingPage_(start,provider).status,'blocked');
+    assert.deepEqual(x.calls,[start,target]);
+    assert.deepEqual(x.events.filter(e=>e.stage==='ai_page_http').map(e=>[e.hop,e.http_status]),[[1,301],[2,403]]);
+    const redirect=x.events.find(e=>e.stage==='ai_page_redirect');
+    assert.equal(redirect.source_url,start);assert.equal(redirect.redirect_url,target);
+    const result=x.events.at(-1);
+    assert.equal(result.stage,'ai_page_result');assert.equal(result.initial_url,start);
+    assert.equal(result.final_url,target);assert.equal(result.count,2);assert.equal(result.http_status,403);
+    assert.ok(x.events.every(e=>e.provider===provider));
+    const direct=setup({[start]:{code:403}},provider);
+    direct.ctx.fetchListingPage_(start,provider);
+    assert.equal(direct.events.at(-1).count,1);
+    assert.ok(!direct.events.some(e=>e.stage==='ai_page_redirect'));
+  }
+});
+
+test('successful redirects, rejected hosts, loops and fetch errors have a terminal diagnostic',()=>{
+  const next=url.replace('/123/d','/456/d');
+  const success=setup({[url]:{code:302,headers:{Location:next}},[next]:{html:'<h1>Wohnung</h1>'}});
+  assert.equal(success.ctx.fetchListingPage_(url,'fotocasa').status,'ok');
+  assert.equal(success.events.at(-1).final_url,next);assert.equal(success.events.at(-1).http_status,200);
+  const rejected=setup({[url]:{code:302,headers:{Location:'https://foreign.test/'}}});
+  rejected.ctx.fetchListingPage_(url,'fotocasa');
+  assert.equal(rejected.calls.length,1);assert.match(rejected.events.at(-1).error,/außerhalb/);
+  assert.equal(rejected.events.find(e=>e.stage==='ai_page_redirect').redirect_url,'https://foreign.test/');
+  const loop=setup({[url]:{code:302,headers:{Location:url}}});
+  loop.ctx.fetchListingPage_(url,'fotocasa');
+  assert.equal(loop.calls.length,5);assert.equal(loop.events.at(-1).count,5);
+  assert.match(loop.events.at(-1).error,/Zu viele/);
+  const failure=setup();failure.ctx.fetchListingPage_(url,'fotocasa');
+  assert.equal(failure.events.at(-1).status,'error');assert.match(failure.events.at(-1).error,/unexpected/);
+});
 test('propertyNotFound redirect is unavailable without fetching search results',()=>{
   const x=setup({[url]:{code:302,headers:{Location:'/es/alquiler/viviendas/malaga/l?propertyNotFound'}}});
   assert.equal(x.ctx.fetchListingPage_(url,'fotocasa').status,'unavailable');assert.equal(x.calls.length,1);

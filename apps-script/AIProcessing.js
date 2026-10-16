@@ -887,39 +887,55 @@ function fetchListingPageForProvider_(url) {
   return fetchListingPage_(url,provider);
 }
 function fetchListingPage_(url,provider) {
+  let current=url, requests=0;
+  const trace=(stage,detail)=>logImageDiagnostic(stage,Object.assign({
+    provider,listing_id:getMailListingId(url) || '',initial_url:url,source_url:current
+  },detail));
+  const finish=result=>{
+    trace('ai_page_result',{status:result.status,http_status:result.httpStatus,
+      final_url:current,count:requests,error:result.error || ''});
+    return result;
+  };
+  trace('ai_page_start',{status:'started'});
   const host=(String(url).match(/^https:\/\/([^/?#]+)/i)||[])[1]||'';
   const check=normalizeProvider(host);
-  if(check!==provider)return {status:'blocked',error:'Portal-Link passt nicht zum Portal.'};
+  if(check!==provider)return finish({status:'blocked',error:'Portal-Link passt nicht zum Portal.'});
   try {
-    let current=url;
     for (let hop=0;hop<5;hop++) {
       const currentHost=(String(current).match(/^https:\/\/([^/?#]+)/i)||[])[1]||'';
       const domain={fotocasa:'fotocasa.es',idealista:'idealista.com',yaencontre:'yaencontre.com',pisos:'pisos.com',immoscout:'immobilienscout24.de',milanuncios:'milanuncios.com'}[provider];
-      if (!domain || !(currentHost.toLowerCase()===domain || currentHost.toLowerCase().endsWith('.'+domain))) return {status:'blocked',error:'Weiterleitung außerhalb des Portals.'};
-      if (/propertyNotFound/i.test(current)) return {status:'unavailable',error:'Portal meldet propertyNotFound.'};
+      if (!domain || !(currentHost.toLowerCase()===domain || currentHost.toLowerCase().endsWith('.'+domain))) return finish({status:'blocked',error:'Weiterleitung außerhalb des Portals.'});
+      if (/propertyNotFound/i.test(current)) return finish({status:'unavailable',error:'Portal meldet propertyNotFound.'});
+      requests++;
+      trace('ai_page_request',{status:'fetching',hop:requests});
       const response=UrlFetchApp.fetch(current,{method:'get',muteHttpExceptions:true,followRedirects:false,validateHttpsCertificates:true,headers:{Accept:'text/html,application/xhtml+xml'}});
       const code=response.getResponseCode();
+      trace('ai_page_http',{status:'received',hop:requests,http_status:code});
       if ([301,302,303,307,308].includes(code)) {
         const headers=response.getAllHeaders();
         let next=headers.Location || headers.location;
         if (Array.isArray(next)) next=next[0];
-        if (!next) return {status:'blocked',httpStatus:code,error:'Weiterleitungsziel fehlt.'};
+        if (!next) return finish({status:'blocked',httpStatus:code,error:'Weiterleitungsziel fehlt.'});
         if (/^\/\//.test(next)) next='https:'+next;
         else if (/^\//.test(next)) next='https://'+currentHost+next;
-        else if (!/^https:\/\//i.test(next)) return {status:'blocked',error:'Unklares Weiterleitungsziel.'};
+        else if (!/^https:\/\//i.test(next)) {
+          trace('ai_page_redirect',{status:'rejected',hop:requests,http_status:code,redirect_url:next,reason:'Unklares Weiterleitungsziel.'});
+          return finish({status:'blocked',error:'Unklares Weiterleitungsziel.'});
+        }
+        trace('ai_page_redirect',{status:'redirect',hop:requests,http_status:code,redirect_url:next});
         current=next;continue;
       }
-      if (code===404 || code===410) return {status:'unavailable',httpStatus:code,error:'HTTP '+code};
-      if(code<200||code>=300)return {status:code===403||code===429||code===503?'blocked':'http_error',httpStatus:code,error:'HTTP '+code};
+      if (code===404 || code===410) return finish({status:'unavailable',httpStatus:code,error:'HTTP '+code});
+      if(code<200||code>=300)return finish({status:code===403||code===429||code===503?'blocked':'http_error',httpStatus:code,error:'HTTP '+code});
       const html=response.getContentText();
       const signal=listingPageSignal_(html);
-      if(signal) return {status:signal,httpStatus:code,error:signal==='unavailable'?'Portal meldet: Anzeige nicht verfügbar.':'Portalinhalt nicht zugänglich.'};
+      if(signal) return finish({status:signal,httpStatus:code,error:signal==='unavailable'?'Portal meldet: Anzeige nicht verfügbar.':'Portalinhalt nicht zugänglich.'});
       const text=extractListingPageText_(html).slice(0,AI_PIPELINE.maxPageTextChars);
       const identityIds=listingPageIdentityIds_(html);
-      return text?{status:'ok',httpStatus:code,text,identity_id:identityIds.length===1?identityIds[0]:null}:{status:'empty',httpStatus:code,error:'Keine auswertbaren Seiteninhalte.'};
+      return finish(text?{status:'ok',httpStatus:code,text,identity_id:identityIds.length===1?identityIds[0]:null}:{status:'empty',httpStatus:code,error:'Keine auswertbaren Seiteninhalte.'});
     }
-    return {status:'blocked',error:'Zu viele Weiterleitungen.'};
-  } catch(e) { return {status:'error',error:e.message}; }
+    return finish({status:'blocked',error:'Zu viele Weiterleitungen.'});
+  } catch(e) { return finish({status:'error',error:e.message}); }
 }
 function listingPageSignal_(html) {
   const top=String(html).match(/<(?:title|h[1-3])\b[^>]*>[\s\S]*?<\/(?:title|h[1-3])>/gi)||[];
