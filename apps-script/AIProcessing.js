@@ -602,10 +602,11 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   const merged = mergeMissingOnly_(emailFields || {}, data.ai_pipeline.page_fields || {});
   populateListingLocation_(merged,data);
   const score = calculateListingScore_(merged, image);
-  const rentPoints = score.rentPoints, imagePoints = score.imagePoints;
+  const rentPoints = score.priceScore, imagePoints = score.imagePoints;
   const terracePoints = score.terracePoints, poolPoints = score.poolPoints;
-  const total = score.total, coverage = score.coverage;
-  setListingValue_(sheet,row,cols,'Punkte',total);
+  const coverage = score.coverage;
+  setListingValue_(sheet,row,cols,'Wohnungsbewertung (0–100)',score.homeScore === null ? '' : score.homeScore);
+  setListingValue_(sheet,row,cols,'Preisbewertung (0–100)',score.priceScore === null ? '' : score.priceScore);
   setListingValue_(sheet,row,cols,'Bewertungsabdeckung (%)',coverage);
   // Location remains descriptive only; it has no influence on points.
   setListingValue_(sheet,row,cols,'Entfernung zu 29001 km',finiteNumber_(merged.distance_km_approx));
@@ -635,10 +636,10 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
     email: 'Gmail', listing_page: data.ai_pipeline.page_status === 'ok' ? 'Portal-Seite' : null,
     text_extraction: data.ai_pipeline.text_source || 'legacy_separate_calls'
   });
-  data.scoring = { version: 2, rent_eur: merged.rent_eur, area_m2: merged.area_m2,
+  data.scoring = { version: 3, home_score: score.homeScore, price_score: score.priceScore, rent_eur: merged.rent_eur, area_m2: merged.area_m2,
     eur_per_m2: merged.rent_eur && merged.area_m2 ? merged.rent_eur / merged.area_m2 : null,
     rent_points: rentPoints, distance_points: null, image_points: imagePoints,
-    terrace_points: terracePoints, pool_points: poolPoints, total_points: total,
+    terrace_points: terracePoints, pool_points: poolPoints, total_points: null,
     coverage_percent: coverage, provisional: coverage < 100 };
   data.ai_analysis_status = 'completed';
   if (data.image_review) data.image_review.provisional = false;
@@ -646,34 +647,49 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
 }
 
 /**
- * Stable integer 0..100 score; unknown values reduce coverage, not points.
- * 55: rent per m²; 30: visual impression; 10: terrace; 5: pool.
- * Location is deliberately excluded.
+ * Independent ratings, both integer 0..100:
+ * Home: photo condition 85, terrace 10, pool 5, no rent or location.
+ * Price: local Málaga asking-rent reference ~16.5 EUR/m² (September 2026).
+ * Missing essentials yield null (blank cell), not an invented zero.
  */
 function calculateListingScore_(fields, image) {
   const f = fields || {}, img = image || {};
-  const rentPoints = scoreRentPerM2_(f.rent_eur, f.area_m2);
-  const imagePoints = img.images_actually_viewed > 0 && ['brightness','space','furniture_condition','care_renovation'].every(k => Number.isFinite(Number(img[k])))
-    ? Math.round((10 * Number(img.brightness) + 9 * Number(img.space) +
-        8 * Number(img.furniture_condition) + 3 * Number(img.care_renovation)) / 5)
-    : null;
+  const priceScore = scoreRentPerM2_(f.rent_eur, f.area_m2);
+  const criteria = [
+    ['brightness',30],['space',25],['furniture_condition',20],['care_renovation',10]
+  ];
+  const validImage = Number(img.images_actually_viewed) > 0 &&
+    criteria.every(([k]) => img[k] !== null && img[k] !== undefined &&
+      Number.isInteger(Number(img[k])) && Number(img[k]) >= 0 && Number(img[k]) <= 5);
+  const imagePoints = validImage ? Math.round(criteria.reduce(
+    (sum,[k,weight]) => sum + Number(img[k]) * weight / 5,0)) : null;
   const terracePoints = typeof f.terrace === 'boolean' ? (f.terrace ? 10 : 0) : null;
   const poolPoints = typeof f.pool === 'boolean' ? (f.pool ? 5 : 0) : null;
-  const scores = [rentPoints, imagePoints, terracePoints, poolPoints];
-  const weights = [55, 30, 10, 5];
-  let total = 0, coverage = 0;
-  scores.forEach((points, i) => {
-    if (Number.isInteger(points)) { total += points; coverage += weights[i]; }
-  });
-  return { rentPoints, imagePoints, terracePoints, poolPoints, total, coverage };
+  const coverage = (validImage ? 85 : 0) + (terracePoints !== null ? 10 : 0) +
+    (poolPoints !== null ? 5 : 0);
+  // Without visual evidence the apartment score should not be presented as reliable.
+  const homeScore = validImage ? Math.round(100 * (imagePoints +
+    (terracePoints || 0) + (poolPoints || 0)) / coverage) : null;
+  return { homeScore, priceScore, rentPoints:priceScore, imagePoints,
+    terracePoints, poolPoints, coverage, total:null };
 }
+
+/** Piecewise scoring against Málaga asking rents. Prices in monthly EUR/m². */
 function scoreRentPerM2_(rent, area) {
   if (rent === null || rent === undefined || rent === '' ||
       area === null || area === undefined || area === '' ||
       !Number.isFinite(Number(rent)) || !Number.isFinite(Number(area)) ||
-      Number(area) <= 0) return null;
-  return Math.round(Math.max(0, Math.min(55,
-    55 * (20 - Number(rent) / Number(area)) / 10)));
+      Number(rent) <= 0 || Number(area) <= 0) return null;
+  const value = Number(rent) / Number(area);
+  const points = [[10,100],[12,90],[14,75],[16.5,50],[18,30],[20,10],[22,0]];
+  if (value <= points[0][0]) return 100;
+  if (value >= points[points.length-1][0]) return 0;
+  for (let i=1;i<points.length;i++){
+    const [highX,highScore] = points[i], [lowX,lowScore] = points[i-1];
+    if (value <= highX) return Math.round(lowScore +
+      (value-lowX) * (highScore-lowScore) / (highX-lowX));
+  }
+  return 0;
 }
 function formatLocation_(direction, km) {
   if (!direction || finiteNumber_(km) === '') return '';
@@ -814,12 +830,12 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   if (sheet.getLastRow() > 1) {
     const rows = sheet.getRange(2,1,sheet.getLastRow()-1,sheet.getLastColumn()).getValues();
     const blank = rows.findIndex(values => values.every((value,i) => value === '' || value === null ||
-      ((i === cols['Gesehen'] || i === cols['Zu löschen']) && value === false)));
+      ((i === cols['Zu löschen']) && value === false)));
     if (blank >= 0) row = blank + 2;
   }
   const values=Array(sheet.getLastColumn()).fill('');
   const assign=(header,value)=>{if(cols[header]!==undefined) values[cols[header]]=value;};
-  assign('Gesehen',false); assign('Zu löschen',false); assign('Datensatz-ID',id);
+  assign('Zu löschen',false); assign('Datensatz-ID',id);
   assign('Anzeigen-ID',String(id).split(':').pop()); assign('Portal',String(id).split(':')[0]);
   assign('Anzeigenlink',url); assign('Titel',subject); assign('E-Mail-Eingang',new Date(q[qi['Queue Eingang UTC']]||Date.now()).toLocaleString('de-DE'));
   assign('Eingang (UTC)',q[qi['Queue Eingang UTC']]||new Date().toISOString());
@@ -832,6 +848,7 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
 function getListingColumns_(sheet) {
   const headers=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
   const out={}; headers.forEach((h,i)=>{if(h) out[String(h).trim()]=i;});
+  for (const name of ['Wohnungsbewertung (0–100)','Preisbewertung (0–100)']) if(out[name]===undefined) throw new Error('Bewertungsspalte fehlt: '+name);
   for (const name of ['Datensatz-ID','Portal','Anzeigenlink','Titel','Miete','Fläche','Zusammenfassung','Lage zu 29001','Entfernung zu 29001 km','Richtung von 29001','Bewertungsabdeckung (%)','Merkmale','Status','Mietart / Laufzeit','Mietprüfung','Einschränkungen','Offene Angaben','Terrasse Punkte','Pool Punkte','Bildbewertung Punkte','Distanz Punkte','Fläche Punkte','Gmail-Link','Anzeigen-ID','E-Mail-ID','KI-Bewertung','Bildanalyse JSON']) if(out[name]===undefined) throw new Error('Anzeigen-Spalte fehlt: '+name);
   return out;
 }
@@ -892,7 +909,6 @@ function blacklistUnavailableListing_(ss,sheet,cols,id,url,reason) {
   const row=findListingRow_(sheet,cols,id,url);
   if(row) {
     sheet.getRange(row,1,1,sheet.getLastColumn()).clearContent();
-    setListingValue_(sheet,row,cols,'Gesehen',false);
     setListingValue_(sheet,row,cols,'Zu löschen',false);
   }
   logImageDiagnostic('listing_blacklisted',{listing_id:id,status:'unavailable',error:reason || ''});
