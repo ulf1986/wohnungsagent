@@ -19,7 +19,13 @@ const MAIL_IMPORT = {
   lookbackDays: 2,
   maxThreads: 200,
   maxMessagesPerRun: 15,
-
+  // Keep one five-minute pipeline trigger; Gmail discovery is less frequent.
+  discoveryIntervalMinutes: 15,
+  discoveryOverlapMinutes: 15,
+  reconciliationIntervalHours: 12,
+  maxRetryMessagesPerRun: 5,
+  gmailCursorKey: 'WOHNUNGSAGENT_GMAIL_DISCOVERY_UTC',
+  gmailReconcileKey: 'WOHNUNGSAGENT_GMAIL_RECONCILE_UTC',
   processingTimeoutMinutes: 20,
   retryDelayMinutes: 30,
 
@@ -105,80 +111,24 @@ function runGmailImagePipeline() {
     }
 
 
-    const label = GmailApp.getUserLabelByName(
-      MAIL_IMPORT.label
-    );
-
-    if (!label) {
-      throw new Error(
-        'Gmail-Label fehlt: ' + MAIL_IMPORT.label
-      );
-    }
-
-    const blockedIds = readMailImageBlacklist(ss);
-
+    // Discovery scans only messages newer than the persisted cursor.
+    // Independently registered retries are loaded by Gmail message ID,
+    // never by rescanning every old conversation.
     const existing = readMailQueueIndex(queue);
-    const processed = readPreviouslyProcessedMailIds(
-      queue
-    );
-
-    const cutoff = Date.now() -
-      MAIL_IMPORT.lookbackDays * 86400000;
-
-    const threads = label.getThreads(
-      0, MAIL_IMPORT.maxThreads
-    );
-
-    const candidates = [];
-    const seen = new Set();
-
-    for (const thread of threads) {
-      for (const mail of thread.getMessages()) {
-        if (mail.getDate().getTime() < cutoff) {
-          continue;
-        }
-
-        const id = mail.getId();
-        if (seen.has(id)) continue;
-        seen.add(id);
-
-        const queued = existing[id];
-
-        if (!queued && processed.has(id)) {
-          continue;
-        }
-
-        if (
-          queued &&
-          (queued.status === 'completed' ||
-           queued.status === 'ready_for_ai' ||
-           queued.status === 'blocked')
-        ) {
-          continue;
-        }
-
-        if (
-          queued &&
-          !mailQueueNeedsRetry(queued)
-        ) {
-          continue;
-        }
-
-        candidates.push(mail);
-      }
+    const processed = readPreviouslyProcessedMailIds(queue);
+    let selected = [];
+    try {
+      selected = collectMailCandidates_(existing, processed);
+    } catch (error) {
+      // A Gmail quota error must not stop Drive/Sheet follow-up work.
+      logImageDiagnostic('mail_scan', {
+        level: 'ERROR', status: 'failed', error: String(error.message || error)
+      });
+      console.error('Gmail-Suche: ' + error.message);
     }
-
-    candidates.sort(
-      (a, b) =>
-        a.getDate().getTime() -
-        b.getDate().getTime()
-    );
-
-    const selected = candidates.slice(
-      0, MAIL_IMPORT.maxMessagesPerRun
-    );
+    const blockedIds = readMailImageBlacklist(ss);
     logImageDiagnostic('mail_scan', {
-      status: 'selected', count: candidates.length, files: selected.length
+      status: 'selected', count: selected.length, files: selected.length
     });
 
     const stats = {
@@ -652,6 +602,7 @@ function readMailQueueIndex(sheet) {
 
     index[id] = {
       row: i + 2,
+      receivedAt: String(cells[1] || ''),
       status: String(cells[7] || ''),
       updatedAt: marker
     };
@@ -688,6 +639,102 @@ function readPreviouslyProcessedMailIds(sheet) {
   }
 
   return ids;
+}
+
+/**
+ * Incremental Gmail discovery. Gmail search returns threads; only the
+ * matching recent messages are inspected. Persist the cursor ONLY after a
+ * complete, untruncated scan whose eligible messages all fit this run.
+ * Retry rows are fetched individually by Gmail ID, not through history scans.
+ *
+ * Calling this requires the pipeline-wide ScriptLock.
+ */
+function collectMailCandidates_(existing, processed) {
+  const now = Date.now();
+  const cutoff = now - MAIL_IMPORT.lookbackDays * 86400000;
+  const props = PropertiesService.getScriptProperties();
+  const key = MAIL_IMPORT.gmailCursorKey;
+  const reconcileKey = MAIL_IMPORT.gmailReconcileKey;
+  const saved = Date.parse(String(props.getProperty(key) || ''));
+  const previous = Number.isFinite(saved) && saved <= now ? saved : NaN;
+  const lastReconcile = Date.parse(String(props.getProperty(reconcileKey) || ''));
+  const reconcileDue = !Number.isFinite(lastReconcile) ||
+    now - lastReconcile >= MAIL_IMPORT.reconciliationIntervalHours * 3600000;
+  const scanDue = reconcileDue || !Number.isFinite(previous) ||
+    now - previous >= MAIL_IMPORT.discoveryIntervalMinutes * 60000;
+  const eligible = (id, date) => {
+    if (date < cutoff || date > now) return false;
+    if (!existing[id] && processed.has(id)) return false;
+    const queued = existing[id];
+    return !queued || (
+      !['completed', 'ready_for_ai', 'blocked'].includes(queued.status) &&
+      mailQueueNeedsRetry(queued)
+    );
+  };
+
+  // Oldest outstanding jobs first; bounded to avoid costly Gmail calls.
+  const retries = Object.keys(existing)
+    .filter(id => {
+      const item = existing[id];
+      const t = Date.parse(String(item.receivedAt || ''));
+      return Number.isFinite(t) && t >= cutoff && t <= now &&
+        !['completed', 'ready_for_ai', 'blocked'].includes(item.status) &&
+        mailQueueNeedsRetry(item);
+    })
+    .sort((a, b) => Date.parse(existing[a].receivedAt) - Date.parse(existing[b].receivedAt))
+    .slice(0, MAIL_IMPORT.maxRetryMessagesPerRun);
+
+  const result = [];
+  const seen = new Set();
+  // Process recent discovery first so retry-heavy queues cannot starve new mail.
+  let scanComplete = false;
+  let limited = false;
+  let discovered = 0;
+  if (scanDue) {
+    const start = reconcileDue || !Number.isFinite(previous) ? cutoff :
+      Math.max(cutoff, previous - MAIL_IMPORT.discoveryOverlapMinutes * 60000);
+    const query = 'label:"' + MAIL_IMPORT.label.replace(/"/g, '') + '" after:' +
+      Math.floor(start / 1000);
+    const threads = GmailApp.search(query, 0, MAIL_IMPORT.maxThreads);
+    limited = threads.length >= MAIL_IMPORT.maxThreads;
+    for (const thread of threads) {
+      for (const mail of thread.getMessages()) {
+        const date = mail.getDate().getTime();
+        if (date < start || date < cutoff || date > now) continue;
+        const id = mail.getId();
+        if (seen.has(id)) continue;
+        seen.add(id);
+        if (!eligible(id, date)) continue;
+        result.push(mail);
+        discovered++;
+      }
+    }
+    result.sort((a, b) => a.getDate().getTime() - b.getDate().getTime());
+    // Never advance the cursor past messages that could not be enqueued.
+    scanComplete = !limited && result.length <= MAIL_IMPORT.maxMessagesPerRun;
+    if (scanComplete) {
+      props.setProperty(key, new Date(now).toISOString());
+      if (reconcileDue) props.setProperty(reconcileKey, new Date(now).toISOString());
+    }
+    logImageDiagnostic('gmail_discovery', {
+      status: scanComplete ? 'checkpoint_saved' : 'backlog_retained',
+      count: discovered, files: threads.length,
+      reason: limited ? 'thread_limit' : result.length > MAIL_IMPORT.maxMessagesPerRun ? 'mail_limit' : ''
+    });
+  }
+
+  // Remaining capacity: retry only known queue IDs, without thread scans.
+  if (result.length < MAIL_IMPORT.maxMessagesPerRun) {
+    for (const id of retries) {
+      if (seen.has(id) || result.length >= MAIL_IMPORT.maxMessagesPerRun) continue;
+      const mail = GmailApp.getMessageById(id);
+      if (mail) {
+        seen.add(id);
+        result.push(mail);
+      }
+    }
+  }
+  return result.slice(0, MAIL_IMPORT.maxMessagesPerRun);
 }
 
 /**
