@@ -478,7 +478,7 @@ test('shared-lock recovery retries an orphaned mail immediately but backs off re
 
 test('incremental Gmail discovery checkpoints and skips redundant scans for 15 minutes',()=>{
   const ctx=context(), values=new Map(), calls=[];
-  const msg={getId:()=> 'new-1',getDate:()=>new Date(),getSubject:()=> 'alert'};
+  const msg={getId:()=> 'new-1',getDate:()=>new Date(Date.now()-1000),getSubject:()=> 'alert'};
   ctx.PropertiesService={getScriptProperties:()=>({
     getProperty:k=>values.get(k)||null, setProperty:(k,v)=>values.set(k,v)
   })};
