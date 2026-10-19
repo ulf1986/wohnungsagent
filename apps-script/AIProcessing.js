@@ -89,8 +89,15 @@ function processNextAiListing(ss, queue) {
   }
   const allFiles = parseJsonArray_(target.values[qi['Queue Drive-Dateien JSON']]);
   // Never send images from a different listing to the AI.
-  if (ids.length > 1 && allFiles.some(file => file && file.file_id &&
-      !filterListingDriveFiles_([file], file.listing_id || '', false).length)) {
+  if (ids.length > 1 && allFiles.some(file => {
+    if (!file || !file.file_id) return false;
+    const name = String(file.name || '').toLowerCase();
+    const match = name.match(/^(idealista|fotocasa|yaencontre|pisos|immoscout|milanuncios)_(\d+)_/);
+    const owner = file.listing_id || getMailListingId(file.listing_url || '') ||
+      (match ? match[1] + ':' + match[2] : '');
+    return !owner || !ids.includes(owner) ||
+      !filterListingDriveFiles_([file], owner, false).length;
+  })) {
     setAiQueueState_(queue, target.rowNumber, index, 'retry', 'Mehrfachmail: Bildzuordnung ungeklärt.',
       new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
     return { status: 'retry', reason: 'ambiguous_images' };
@@ -280,7 +287,9 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
 
     const fileList = data.drive_files.filter(file => file && file.file_id);
     if (!fileList.length) {
-      const found = findDriveListingFiles_(listingId, mailId);
+      const found = filterListingDriveFiles_(
+        findDriveListingFiles_(listingId, oneListing ? mailId : ''),
+        listingId, oneListing);
       data.drive_files = mergeDriveFiles_(data.drive_files, found);
       if (!found.length) {
         finalizeAiListing_(sheet, listingRow, cols, data, emailFields);
