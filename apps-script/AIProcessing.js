@@ -34,6 +34,7 @@ const AI_PIPELINE = {
   referenceAddress: 'Alameda Principal 3, 29001, Málaga, España',
   retryBaseMinutes: 30,
   processingTimeoutMinutes: 60,
+  maxMailAgeHours: 48,
   timeBudgetMs: 180000,
   imageCriteria: ['brightness', 'space', 'furniture_condition', 'care_renovation']
 };
@@ -61,6 +62,10 @@ function processNextAiListing(ss, queue) {
   let target = null;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
+    // Old mail jobs are not retried: listings typically expire quickly.
+    const received = row[qi['Queue Eingang UTC']];
+    const receivedAt = received instanceof Date ? received.getTime() : Date.parse(String(received || ''));
+    if (!Number.isFinite(receivedAt) || receivedAt > now || now - receivedAt >= AI_PIPELINE.maxMailAgeHours * 3600000) continue;
     if (String(row[qi['Queue Bildstatus']] || '') !== AI_PIPELINE.statusReady) continue;
     const state = String(row[index.status] || 'pending');
     if (state === 'completed' || state === 'duplicate' || state === 'blocked') continue;
@@ -77,11 +82,18 @@ function processNextAiListing(ss, queue) {
 
   const links = parseJsonArray_(target.values[qi['Queue Inseratslinks JSON']]).map(canonicalListingUrl_).filter(Boolean);
   const ids = [...new Set(links.map(getMailListingId).filter(Boolean))];
-  // Bestehende Freigabe bleibt auf eindeutig einzelne Angebote begrenzt.
-  if (ids.length !== 1) {
-    setAiQueueState_(queue, target.rowNumber, index, 'retry', 'Keine eindeutige Einzelanzeige.',
+  if (!ids.length) {
+    setAiQueueState_(queue, target.rowNumber, index, 'retry', 'Keine gültige Anzeigen-ID gefunden.',
       new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
-    return { status: 'retry', reason: 'ambiguous_listing' };
+    return { status: 'retry', reason: 'missing_listing_id' };
+  }
+  const allFiles = parseJsonArray_(target.values[qi['Queue Drive-Dateien JSON']]);
+  // Never send images from a different listing to the AI.
+  if (ids.length > 1 && allFiles.some(file => file && file.file_id &&
+      !filterListingDriveFiles_([file], file.listing_id || '', false).length)) {
+    setAiQueueState_(queue, target.rowNumber, index, 'retry', 'Mehrfachmail: Bildzuordnung ungeklärt.',
+      new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
+    return { status: 'retry', reason: 'ambiguous_images' };
   }
   const done = parseJsonArray_(target.values[index.doneIds]);
   let activeId = String(target.values[index.activeId] || '').trim();
@@ -111,6 +123,8 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
   const mailId = String(q[qi['Queue Gmail-ID']] || '').trim();
   const subject = String(q[qi['Queue Betreff']] || '');
   const body = String(q[qi['Queue Originaltext']] || '');
+  // A digest contains several listings; do not attribute its full text to one listing.
+  const listingCount = new Set(parseJsonArray_(q[qi['Queue Inseratslinks JSON']]).map(getMailListingId).filter(Boolean)).size;
   const links = parseJsonArray_(q[qi['Queue Inseratslinks JSON']]).map(canonicalListingUrl_).filter(Boolean);
   const allQueueFiles = parseJsonArray_(q[qi['Queue Drive-Dateien JSON']]);
   const listingId = target.listingId || getMailListingId(links[0]);
@@ -184,7 +198,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       let page;
       try { page = preflightPage || fetchListingPageForProvider_(listingUrl); }
       catch (error) { page = { status: 'fetch_error', error: String(error.message || error) }; }
-      const emailResult = callListingExtraction_(config, 'email_and_page', subject, body, listingUrl,
+      const emailResult = callListingExtraction_(config, 'email_and_page', subject, listingCount === 1 ? body : '', listingUrl,
         page.status === 'ok' ? page.text : '', null);
       const checked = acceptListingPageResult_(emailResult, page, listingId);
       data.ai_pipeline.email_source_id = mailId;
