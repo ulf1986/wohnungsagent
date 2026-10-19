@@ -16,7 +16,7 @@ const MAIL_IMPORT = {
   label: 'Wohnungssuche/Suchaufträge',
   sheetName: 'Verarbeitung',
 
-  lookbackDays: 7,
+  lookbackDays: 2,
   maxThreads: 200,
   maxMessagesPerRun: 15,
 
@@ -396,8 +396,11 @@ function runGmailImagePipeline() {
         // Nur eine eindeutig zugeordnete Immobilie mit Drive-Bildern
         // darf in die KI-Queue. Bildlose Angebote bleiben im Retry.
         const oneListing = propertyIds.length === 1;
-        const ready = status === 'completed' && oneListing &&
-          allFiles.some(file => file.file_id && file.source_url);
+        const ready = status === 'completed' &&
+          allFiles.some(file => file.file_id && file.source_url) &&
+          (oneListing || allFiles.every(file =>
+            !file.file_id || !isPropertyImageUrl(file.source_url) ||
+            (file.listing_id && propertyIds.includes(file.listing_id))));
         if (ready) status = 'ready_for_ai';
         else if (status === 'completed') status = 'retry';
         else if (status === 'no_images' || status === 'gallery_unavailable')
@@ -411,7 +414,7 @@ function runGmailImagePipeline() {
             (galleryUnavailable
               ? 'Galerie nicht vollständig erreichbar'
               : propertyIds.length > 1
-                ? 'Mehrfachangebote: keine Freigabe der gesamten Mail für eine einzelne Anzeige'
+                ? 'Mehrfachangebote: Bilder noch nicht eindeutig zugeordnet'
                 : ''),
           ready ? new Date().toISOString() : ''
         );
