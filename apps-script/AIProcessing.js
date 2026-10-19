@@ -185,6 +185,15 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
         blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,preflightPage.error);
         return {status:'unavailable',listingId};
       }
+      // Do not create a placeholder row when a digest has neither its
+      // own visible mail card nor a confirmed listing page.
+      if (!oneListing && !listingMailText.trim() &&
+          (preflightPage.status !== 'ok' || !preflightPage.text)) {
+        setAiQueueState_(queue, rowNo, index, 'retry',
+          'Sammelmail: keine sichere Textquelle für Einzelanzeige.',
+          new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
+        return {status:'retry', reason:'missing_listing_source', listingId};
+      }
     }
     const listingRow = existingRow || appendListingRow_(sheet, cols, listingId, mailId, listingUrl, subject, q, qi, queueFiles);
     if (existingRow && !sheet.getRange(listingRow, cols['Datensatz-ID'] + 1).getValue()) {
