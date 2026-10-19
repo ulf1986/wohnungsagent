@@ -195,7 +195,8 @@ function runGmailImagePipeline() {
     for (const mail of selected) {
       // Do not start another costly mail/image download near the runtime budget.
       // Remaining messages stay queued for the next trigger.
-      if (Date.now() - pipelineStartedAt >= AI_PIPELINE.timeBudgetMs) {
+      if (Date.now() - pipelineStartedAt >=
+          (typeof AI_PIPELINE !== 'undefined' ? AI_PIPELINE.timeBudgetMs : 180000)) {
         logImageDiagnostic('mail_import', {
           status: 'deferred', reason: 'Zeitbudget vor nächstem Mailimport',
           remaining: selected.length - stats.processed
