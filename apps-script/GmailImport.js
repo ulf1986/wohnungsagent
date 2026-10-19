@@ -76,6 +76,34 @@ function runGmailImagePipeline() {
     }
 
     prepareMailQueue(queue);
+    // Existing ready-for-AI jobs already have their images in Drive.
+    // Advance one persisted AI stage BEFORE potentially slow new downloads.
+    // The global script lock above protects this entire operation.
+    if (typeof AI_PIPELINE !== 'undefined' &&
+        Date.now() - pipelineStartedAt < AI_PIPELINE.timeBudgetMs) {
+      try {
+        runImageDiagnosticStage('ai_processing', () => {
+          const result = processNextAiListing(ss, queue);
+          logImageDiagnostic('ai_result', {
+            status: result.status, listing_id: result.listingId || '',
+            error: result.error || '',
+            level: result.status === 'retry' ? 'WARN' : 'INFO'
+          });
+          return result;
+        });
+      } catch (error) {
+        logImageDiagnostic('ai_error', {
+          status: 'failed', level: 'ERROR', error: String(error.message || error)
+        });
+        console.error('KI-Verarbeitung: ' + error.message);
+      } finally {
+        if (imageDiagnosticRun) {
+          imageDiagnosticRun.mailId = '';
+          imageDiagnosticRun.provider = '';
+        }
+      }
+    }
+
 
     const label = GmailApp.getUserLabelByName(
       MAIL_IMPORT.label
@@ -165,6 +193,15 @@ function runGmailImagePipeline() {
     };
 
     for (const mail of selected) {
+      // Do not start another costly mail/image download near the runtime budget.
+      // Remaining messages stay queued for the next trigger.
+      if (Date.now() - pipelineStartedAt >= AI_PIPELINE.timeBudgetMs) {
+        logImageDiagnostic('mail_import', {
+          status: 'deferred', reason: 'Zeitbudget vor nächstem Mailimport',
+          remaining: selected.length - stats.processed
+        });
+        break;
+      }
       const mailId = mail.getId();
       if (imageDiagnosticRun) {
         imageDiagnosticRun.mailId = mailId;
@@ -485,23 +522,6 @@ function runGmailImagePipeline() {
       count: stats.processed, uploaded: stats.uploaded, errors: stats.retry,
       status: stats.retry ? 'has_retries' : 'completed'
     });
-    // Eine KI-Stufe je Lauf; bei langen Downloads bleibt sie für den nächsten Lauf liegen.
-    if (typeof AI_PIPELINE !== 'undefined' && Date.now() - pipelineStartedAt < AI_PIPELINE.timeBudgetMs) {
-      try {
-        runImageDiagnosticStage('ai_processing', () => {
-          const result = processNextAiListing(ss, queue);
-          logImageDiagnostic('ai_result', { status: result.status, listing_id: result.listingId || '',
-            error: result.error || '', level: result.status === 'retry' ? 'WARN' : 'INFO' });
-          return result;
-        });
-      } catch (error) {
-        console.error('KI-Verarbeitung: ' + error.message);
-      } finally {
-        if (imageDiagnosticRun) { imageDiagnosticRun.mailId = ''; imageDiagnosticRun.provider = ''; }
-      }
-    } else {
-      logImageDiagnostic('ai_processing', { status: 'deferred', reason: 'Zeitbudget nach Bildimport' });
-    }
     try {
       runImageDiagnosticStage('identity_audit', () => auditListingImageAssignments(ss));
     } catch (error) {
