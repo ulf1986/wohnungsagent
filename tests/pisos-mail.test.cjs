@@ -489,8 +489,8 @@ test('incremental Gmail discovery checkpoints and skips redundant scans for 15 m
   assert.equal(calls.length,1);
   assert.ok(first.scanCheckpoint);
   assert.ok(calls[0].includes('label:'));
-  values.set(ctx.MAIL_IMPORT.gmailCursorKey,first.scanCheckpoint);
-  values.set(ctx.MAIL_IMPORT.gmailReconcileKey,first.scanCheckpoint);
+  values.set('WOHNUNGSAGENT_GMAIL_DISCOVERY_UTC',first.scanCheckpoint);
+  values.set('WOHNUNGSAGENT_GMAIL_RECONCILE_UTC',first.scanCheckpoint);
   const second=ctx.collectMailCandidates_({},new Set());
   assert.equal(second.length,0);
   assert.equal(calls.length,1);
