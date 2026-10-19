@@ -128,7 +128,14 @@ function runQueue(html, { blocked = [], oldFiles = [], failDownload = false, fet
     CONFIG: { spreadsheetId: 'test', sheetName: 'Anzeigen' },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     SpreadsheetApp: { openById: () => ({ getSheetByName: () => sheet }), flush() {} },
-    GmailApp: { getUserLabelByName: () => ({ getThreads: () => [{ getMessages: () => [mail] }] }) },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: () => null, setProperty() {}
+    }) },
+    GmailApp: {
+      search: () => [{ getMessages: () => [mail] }],
+      getMessageById: () => mail,
+      getUserLabelByName: () => ({ getThreads: () => [{ getMessages: () => [mail] }] })
+    },
     prepareMailQueue() {}, readMailQueueIndex: () => ({ 'test-mail': { row: 2, status: 'retry' } }),
     readPreviouslyProcessedMailIds: () => new Set(), readMailImageBlacklist: () => new Set(blocked),
     getImageFolder: () => ({}), processExistingListingImages: () => ({}),
