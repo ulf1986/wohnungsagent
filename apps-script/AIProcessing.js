@@ -118,7 +118,8 @@ function processNextAiListing(ss, queue) {
   queue.getRange(target.rowNumber, index.activeId + 1).setValue(activeId);
   queue.getRange(target.rowNumber, index.listingId + 1).setValue(activeId);
   const result = processAiQueueRow_(ss, queue, target, qi, index);
-  markAiQueueProgress_(queue, target.rowNumber, index, String(result.status || 'unknown'), false);
+  markAiQueueProgress_(queue, target.rowNumber, index, String(result.status || 'unknown'), false,
+    result.status !== 'retry' && result.status !== 'needs_review');
   if (['completed','no_images','blocked','unavailable','duplicate'].includes(result.status)) {
     if (!done.includes(activeId)) done.push(activeId);
     queue.getRange(target.rowNumber, index.doneIds + 1).setValue(JSON.stringify(done));
@@ -441,7 +442,7 @@ function ensureAiQueueColumns_(queue) {
   const range = queue.getRange(1, start, 1, AI_PIPELINE.queueHeaders.length);
   const current = range.getValues()[0];
   for (let i = 0; i < current.length; i++) {
-    if (current[i] && current[i] !== AI_PIPELINE.queueHeaders[i]) throw new Error('Queue-Spalte R:Y bereits anderweitig belegt.');
+    if (current[i] && current[i] !== AI_PIPELINE.queueHeaders[i]) throw new Error('KI-Queue-Spalte R:AC bereits anderweitig belegt.');
   }
   range.setValues([AI_PIPELINE.queueHeaders]);
 }
@@ -478,14 +479,14 @@ function setAiQueueState_(sheet, row, ix, status, error, retryAt, attempts) {
  * The shared ScriptLock protects concurrent writes. Persisted work steps give
  * operators a durable run ID and explain which result was last confirmed.
  */
-function markAiQueueProgress_(queue, rowNo, ix, step, started) {
+function markAiQueueProgress_(queue, rowNo, ix, step, started, confirmed) {
   const now = new Date().toISOString();
   const id = started ? now + '_' + Math.random().toString(36).slice(2, 9) :
     String(queue.getRange(rowNo, ix.runId + 1).getValue() || '');
   const start = started ? now :
     String(queue.getRange(rowNo, ix.stepStarted + 1).getValue() || '');
   queue.getRange(rowNo, ix.runId + 1, 1, 4).setValues([[
-    id, step, start, started ? '' : now
+    id, step, start, started || confirmed === false ? '' : now
   ]]);
   SpreadsheetApp.flush();
   logImageDiagnostic('ai_step', { row: rowNo, step, status: started ? 'started' : 'saved' });
@@ -518,7 +519,7 @@ function completeAiApiOperation_(data) {
 }
 /** A definite 4xx rejection cannot contain a successful AI result. */
 function recordDefiniteAiFailure_(sheet, row, cols, data, error) {
-  if (!/^OpenAI HTTP 4\\d\\d(?:\\b|$)/.test(String(error && error.message || error))) return;
+  if (!/^OpenAI HTTP 4\d\d(?:\b|$)/.test(String(error && error.message || error))) return;
   const op = data.ai_pipeline && data.ai_pipeline.api_operation;
   if (op && op.status === 'started') {
     op.status = 'rejected';
