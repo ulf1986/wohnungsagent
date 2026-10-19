@@ -127,7 +127,7 @@ function runGmailImagePipeline() {
         level: 'ERROR', status: 'failed', error: String(error.message || error)
       });
       console.error('Gmail-Suche: ' + error.message);
-      if (/zu häufig aufgerufen:\\s*gmail|too many times.*gmail|quota.*gmail/i.test(String(error.message || error))) {
+      if (/zu häufig aufgerufen: *gmail|too many times.*gmail|quota.*gmail/i.test(String(error.message || error))) {
         const until = new Date(Date.now() + MAIL_IMPORT.quotaCooldownMinutes * 60000).toISOString();
         PropertiesService.getScriptProperties().setProperty(MAIL_IMPORT.gmailCooldownKey, until);
         logImageDiagnostic('gmail_quota', {
