@@ -38,7 +38,7 @@ function setup({ blocked = false, images = true, fileCount = 1 } = {}) {
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../apps-script',name+'.js'),'utf8'),ctx);
   const qHeaders = vm.runInContext("['E-Mail-ID','Eingang','Verarbeitet','Status','Anzahl','IDs','Fehler',...MAIL_IMPORT.headers,...AI_PIPELINE.queueHeaders]",ctx);
   const row = qHeaders.map(()=>''), at = n=>qHeaders.indexOf(n);
-  row[at('Queue Gmail-ID')]='mail-1'; row[at('Queue Eingang UTC')]='2026-10-15T12:00:00.000Z';
+  row[at('Queue Gmail-ID')]='mail-1'; row[at('Queue Eingang UTC')]=new Date().toISOString();
   row[at('Queue Betreff')]='Wohnung'; row[at('Queue Originaltext')]='Fakten aus der Mail';
   row[at('Queue Inseratslinks JSON')]=JSON.stringify(['https://www.idealista.com/inmueble/123/?tracking=a','https://www.idealista.com/inmueble/123/']);
   row[at('Queue Drive-Dateien JSON')]=JSON.stringify(images ? Array.from({length:fileCount},(_,i)=>({file_id:'photo-'+(i+1),listing_id:'idealista:123',source_url:'https://img4.idealista.com/photo'+(i+1)+'.jpg'})) : []);
@@ -61,7 +61,7 @@ test('ready mail becomes a row, survives offline page, completes photos and neve
   const x=setup();
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   assert.equal(x.value(x.listing,'Titel'),'Wohnung aus E-Mail');
-  assert.equal(x.value(x.listing,'Eingang (UTC)'),'2026-10-15T12:00:00.000Z');
+  assert.equal(x.value(x.listing,'Eingang (UTC)'),x.value(x.queue,'Queue Eingang UTC'));
   assert.equal(x.value(x.listing,'Datensatz-ID'),'idealista:123');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
   assert.equal(x.value(x.listing,'KI-Bewertung'),'Abgeschlossen');
@@ -211,10 +211,36 @@ test('identity matching uses canonical listing ID in tracking variants and rejec
   assert.throws(()=>x.ctx.findListingRow_(x.listing,cols,'idealista:123'),/Widersprüchliche/);
 });
 
-test('multi-listing ready flag is not enough to authorize AI processing',()=>{
+test('multi-listing mail requires a listing-specific source when its page is offline',()=>{
   const x=setup();x.setQueue('Queue Inseratslinks JSON',JSON.stringify([
     'https://www.idealista.com/inmueble/123/','https://www.idealista.com/inmueble/456/']));
-  assert.equal(x.ctx.processNextAiListing(x.ss).reason,'ambiguous_listing');
+  const result=x.ctx.processNextAiListing(x.ss);
+  assert.equal(result.reason,'missing_listing_source');
+  assert.deepEqual(x.calls,['page']);
+  assert.equal(x.value(x.listing,'Datensatz-ID'),undefined);
+});
+
+test('multi-listing mail processes each separately using confirmed page text',()=>{
+  const x=setup();
+  x.setQueue('Queue Inseratslinks JSON',JSON.stringify([
+    'https://www.idealista.com/inmueble/123/','https://www.idealista.com/inmueble/456/']));
+  x.ctx.fetchListingPageForProvider_=url=>{x.calls.push('page');return {
+    status:'ok', text:'Immobilienseite für '+url, identity_id:x.ctx.getMailListingId(url)
+  };};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  assert.equal(x.value(x.listing,'Datensatz-ID'),'idealista:123');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  assert.equal(x.value(x.queue,'KI Abgeschlossene Anzeigen JSON'),'["idealista:123"]');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  assert.equal(x.listing.rows.filter(r=>r[headers.indexOf('Datensatz-ID')]==='idealista:456').length,1);
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_images');
+  assert.equal(x.value(x.queue,'KI Verarbeitungsstatus'),'completed');
+});
+
+test('48-hour queue age is enforced before API requests and duplicates',()=>{
+  const x=setup();
+  x.setQueue('Queue Eingang UTC',new Date(Date.now()-49*3600000).toISOString());
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
   assert.deepEqual(x.calls,[]);
   assert.equal(x.value(x.listing,'Datensatz-ID'),undefined);
 });
