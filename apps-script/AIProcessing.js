@@ -935,7 +935,16 @@ function extractListingMailExcerpt_(body, listingId) {
   for (let i = start + 1; i < occurrences.length; i++) {
     if (occurrences[i].id !== listingId) { end = occurrences[i].at; break; }
   }
-  return text.slice(occurrences[start].at, Math.min(end, occurrences[start].at + 2500));
+  // Kartenbeschreibung nur bis zur nächsten Leerzeile verwenden.
+  // Ohne klare Kartengrenze ist ausschließlich der konkrete Inseratslink sicher.
+  const excerpt = text.slice(occurrences[start].at, Math.min(end, occurrences[start].at + 2500));
+  const separator = excerpt.search(/\r?\n[ \t]*\r?\n/);
+  if (separator >= 0) return excerpt.slice(0, separator);
+  if (occurrences.some(item => item.id !== listingId)) {
+    const firstLine = excerpt.search(/\r?\n/);
+    return firstLine >= 0 ? excerpt.slice(0, firstLine) : excerpt;
+  }
+  return excerpt;
 }
 
 function filterListingDriveFiles_(files, listingId, allowUnassigned) {
