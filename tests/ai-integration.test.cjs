@@ -350,3 +350,43 @@ for(const [provider,url] of portalCases) {
     assert.deepEqual(x.calls,[]);
   });
 }
+
+test('uncertain text API outcome stops automated duplicate requests',()=>{
+  const x=setup();let requests=0;
+  x.ctx.callListingExtraction_=()=>{requests++;throw new Error('socket closed without response');};
+  const result=x.ctx.processNextAiListing(x.ss);
+  assert.equal(result.status,'needs_review');
+  assert.equal(x.value(x.queue,'KI Verarbeitungsstatus'),'needs_review');
+  assert.match(x.value(x.queue,'KI Fehler'),/ungeklärt/);
+  const stored=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  assert.equal(stored.ai_pipeline.api_operation.status,'started');
+  assert.equal(stored.ai_pipeline.api_operation.kind,'email_and_page');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
+  assert.equal(requests,1);
+  assert.match(x.value(x.queue,'KI Arbeitsschritt'),/needs_review/);
+  assert.equal(x.value(x.queue,'KI Ergebnis gespeichert UTC'),'');
+});
+
+test('uncertain image API result retains extracted facts and selected batch',()=>{
+  const x=setup();
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  x.ctx.callImageReview_=()=>{throw new Error('network timed out after dispatch');};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'needs_review');
+  const stored=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  assert.ok(stored.ai_pipeline.email_fields);
+  assert.equal(stored.ai_pipeline.api_operation.kind,'image_review');
+  assert.deepEqual(Array.from(stored.ai_pipeline.api_operation.file_ids),['photo-1']);
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
+});
+
+test('orphaned processing state is recovered under the exclusive lock using saved facts',()=>{
+  const x=setup();let texts=0;
+  x.ctx.callListingExtraction_=()=>{texts++;return {fields:{title:'Saved facts',rent_eur:1100},missing_fields:[]};};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  x.setQueue('KI Verarbeitungsstatus','processing');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  assert.equal(texts,1);
+  assert.equal(x.value(x.queue,'KI Verarbeitungsstatus'),'completed');
+  assert.ok(x.value(x.queue,'KI Lauf-ID'));
+  assert.ok(x.value(x.queue,'KI Ergebnis gespeichert UTC'));
+});
