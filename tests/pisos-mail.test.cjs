@@ -108,7 +108,7 @@ test('photo attributes and encoded paths accepted only inside the listing anchor
 });
 
 // Exercise the real queue pipeline, stubbing only Google I/O and unrelated jobs.
-function runQueue(html, { blocked = [], oldFiles = [], failDownload = false, fetch = null } = {}) {
+function runQueue(html, { blocked = [], oldFiles = [], failDownload = false, fetch = null, receivedAt = new Date() } = {}) {
   const ctx = context(), writes = new Map();
   let downloads = 0;
   const sheet = {
@@ -120,7 +120,7 @@ function runQueue(html, { blocked = [], oldFiles = [], failDownload = false, fet
     }
   };
   const mail = {
-    getId: () => 'test-mail', getDate: () => new Date(),
+    getId: () => 'test-mail', getDate: () => receivedAt,
     getBody: () => html, getPlainBody: () => '', getSubject: () => 'Pisos alert'
   };
   Object.assign(ctx, {
@@ -166,22 +166,23 @@ test('single listing reaches ready_for_ai with the correct file ownership', () =
   assert.equal(result.links.length, 1);
 });
 
-test('daily multi-listing email retains retry and separate file ownership', () => {
+test('daily multi-listing email becomes ready with ten separately assigned photos', () => {
   const result = runQueue(fixture(daily));
-  assert.equal(result.status[0], 'retry');
-  assert.equal(result.status[2], '');
-  assert.match(result.status[1], /Mehrfachangebote/);
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.ok(result.status[2]);
   assert.equal(result.downloads, 10);
   assert.deepEqual(result.files.map(f => f.listing_id), ids.map(id => 'pisos:' + id));
 });
 
-test('blacklist prevents any download for blocked and mixed emails', () => {
+test('blacklist blocks only the affected listing in mixed digest', () => {
   let result = runQueue(fixture(instant), { blocked: ['pisos:67520671658'] });
   assert.equal(result.status[0], 'blocked');
   assert.equal(result.downloads, 0);
   result = runQueue(fixture(daily), { blocked: ['pisos:68425628298'] });
-  assert.equal(result.status[0], 'retry');
-  assert.equal(result.downloads, 0);
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.equal(result.downloads, 9);
+  assert.equal(result.files.length, 9);
+  assert.ok(result.files.every(file => file.listing_id !== 'pisos:68425628298'));
 });
 
 test('shared photo across listings is ambiguous and keeps retry', () => {
@@ -189,10 +190,10 @@ test('shared photo across listings is ambiguous and keeps retry', () => {
   const html = '<a href="' + first.listing_url + '"><img src="' + first.source_url + '"></a>' +
     '<a href="https://www.pisos.com/alquilar/piso-other-123_456/"><img src="' + first.source_url + '"></a>';
   const result = runQueue(html);
-  assert.equal(result.downloads, 1);
+  assert.equal(result.downloads, 0);
   assert.equal(result.status[0], 'retry');
   assert.match(result.status[1], /ohne eindeutige Inseratszuordnung/);
-  assert.equal(result.files[0].listing_id, undefined);
+  assert.equal(result.files.length, 0);
 });
 
 test('retries reuse stored photos, restore ownership, and retain retry on failed downloads', () => {
@@ -324,10 +325,10 @@ test('ImmoScout single listing is ready, reuses stored files and preserves retry
   assert.equal(runQueue(fixture(scoutInstant), { failDownload: true }).status[0], 'retry');
 });
 
-test('ImmoScout multi-listing, missing photos and shared photos retain retry', () => {
+test('ImmoScout multi-listing passes; missing and shared photos remain safe', () => {
   let result = runQueue(fixture(scoutWelcome));
-  assert.equal(result.status[0], 'retry');
-  assert.equal(result.status[2], '');
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.ok(result.status[2]);
   assert.equal(result.downloads, 8);
   assert.deepEqual(result.files.map(f => f.listing_id), scoutPhotoIds.map(id => 'immoscout:' + id));
   const ctx = context(), photo = ctx.extractImmoScoutMailImages(fixture(scoutInstant))[0];
@@ -335,7 +336,8 @@ test('ImmoScout multi-listing, missing photos and shared photos retain retry', (
     '<a href="https://www.immobilienscout24.de/expose/123"><img src="' + photo.source_url + '"></a>';
   result = runQueue(shared);
   assert.equal(result.status[0], 'retry');
-  assert.equal(result.files[0].listing_id, undefined);
+  assert.equal(result.downloads, 0);
+  assert.equal(result.files.length, 0);
   assert.match(result.status[1], /ohne eindeutige Inseratszuordnung/);
   const missing = '<a href="' + photo.listing_url + '"><img src="https://www.static-immobilienscout24.de/statpic/mail/placeholder_no_image_v2.png"></a>';
   result = runQueue(missing);
@@ -348,8 +350,17 @@ test('ImmoScout blacklist stops downloads for single, mixed and placeholder-only
   assert.equal(result.status[0], 'blocked');
   assert.equal(result.downloads, 0);
   result = runQueue(fixture(scoutWelcome), { blocked: ['immoscout:171420671'] });
-  assert.equal(result.status[0], 'retry');
-  assert.equal(result.downloads, 0);
+  assert.equal(result.status[0], 'ready_for_ai');
+  assert.equal(result.downloads, 8);
+  assert.ok(result.files.every(f => f.listing_id !== 'immoscout:171420671'));
+});
+
+test('Gmail scans only messages received within 48 hours', () => {
+  const old = runQueue(fixture(instant), {
+    receivedAt: new Date(Date.now() - 49 * 3600000)
+  });
+  assert.equal(old.downloads, 0);
+  assert.equal(old.status, undefined);
 });
 
 test('Main registers ImmoScout for existing-listing imports and portal-name aliases', () => {
