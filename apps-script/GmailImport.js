@@ -26,6 +26,8 @@ const MAIL_IMPORT = {
   maxRetryMessagesPerRun: 5,
   gmailCursorKey: 'WOHNUNGSAGENT_GMAIL_DISCOVERY_UTC',
   gmailReconcileKey: 'WOHNUNGSAGENT_GMAIL_RECONCILE_UTC',
+  gmailCooldownKey: 'WOHNUNGSAGENT_GMAIL_PAUSE_UNTIL',
+  quotaCooldownMinutes: 60,
   processingTimeoutMinutes: 20,
   retryDelayMinutes: 30,
 
@@ -125,6 +127,13 @@ function runGmailImagePipeline() {
         level: 'ERROR', status: 'failed', error: String(error.message || error)
       });
       console.error('Gmail-Suche: ' + error.message);
+      if (/zu häufig aufgerufen:\\s*gmail|too many times.*gmail|quota.*gmail/i.test(String(error.message || error))) {
+        const until = new Date(Date.now() + MAIL_IMPORT.quotaCooldownMinutes * 60000).toISOString();
+        PropertiesService.getScriptProperties().setProperty(MAIL_IMPORT.gmailCooldownKey, until);
+        logImageDiagnostic('gmail_quota', {
+          level: 'WARN', status: 'paused', reason: 'Gmail-Limit', until
+        });
+      }
     }
     const blockedIds = readMailImageBlacklist(ss);
     logImageDiagnostic('mail_scan', {
@@ -663,6 +672,11 @@ function collectMailCandidates_(existing, processed) {
   const now = Date.now();
   const cutoff = now - MAIL_IMPORT.lookbackDays * 86400000;
   const props = PropertiesService.getScriptProperties();
+  const pauseUntil = Date.parse(String(props.getProperty(MAIL_IMPORT.gmailCooldownKey) || ''));
+  if (Number.isFinite(pauseUntil) && now < pauseUntil) {
+    logImageDiagnostic('gmail_quota', { status: 'paused', reason: 'Gmail-Kontingent', until: new Date(pauseUntil).toISOString() });
+    return [];
+  }
   const key = MAIL_IMPORT.gmailCursorKey;
   const reconcileKey = MAIL_IMPORT.gmailReconcileKey;
   const saved = Date.parse(String(props.getProperty(key) || ''));
