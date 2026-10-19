@@ -97,7 +97,8 @@ function processNextAiListing(ss, queue) {
   }
   const done = parseJsonArray_(target.values[index.doneIds]);
   let activeId = String(target.values[index.activeId] || '').trim();
-  if (!activeId || done.includes(activeId)) activeId = ids.find(id => !done.includes(id)) || '';
+  if (!activeId || !ids.includes(activeId) || done.includes(activeId))
+    activeId = ids.find(id => !done.includes(id)) || '';
   if (!activeId) {
     setAiQueueState_(queue, target.rowNumber, index, 'completed', '', '');
     return { status: 'completed', listings: done.length };
@@ -134,6 +135,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
   }
   const listingUrl = links.find(url => getMailListingId(url) === listingId) || '';
   const oneListing = new Set(links.map(getMailListingId).filter(Boolean)).size === 1;
+  const listingMailText = oneListing ? body : extractListingMailExcerpt_(body, listingId);
   const safePrefix = String(listingId).toLowerCase().replace(/[^a-z0-9_-]+/g, '_') + '_';
   const queueFiles = filterListingDriveFiles_(allQueueFiles, listingId, oneListing);
   setAiQueueState_(queue, rowNo, index, 'processing', '', '');
@@ -198,8 +200,16 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       let page;
       try { page = preflightPage || fetchListingPageForProvider_(listingUrl); }
       catch (error) { page = { status: 'fetch_error', error: String(error.message || error) }; }
-      const emailResult = callListingExtraction_(config, 'email_and_page', subject, listingCount === 1 ? body : '', listingUrl,
-        page.status === 'ok' ? page.text : '', null);
+      if (listingCount > 1 && !listingMailText.trim() &&
+          (page.status !== 'ok' || !page.text)) {
+        setAiQueueState_(queue, rowNo, index, 'retry',
+          'Sammelmail: keine sichere Textquelle für Einzelanzeige.',
+          new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
+        return { status: 'retry', reason: 'missing_listing_source', listingId };
+      }
+      const emailResult = callListingExtraction_(config, 'email_and_page',
+        oneListing ? subject : 'Inserat ' + listingId,
+        listingMailText, listingUrl, page.status === 'ok' ? page.text : '', null);
       const checked = acceptListingPageResult_(emailResult, page, listingId);
       data.ai_pipeline.email_source_id = mailId;
       data.ai_pipeline.page_checked = true;
@@ -891,6 +901,25 @@ function parseAiListingJson_(value) {
 }
 function parseJsonArray_(value) { if(!value)return []; try { const x=JSON.parse(String(value)); return Array.isArray(x)?x:[]; } catch(e){return [];} }
 function mergeDriveFiles_(a,b) { const out=[]; const seen=new Set(); for(const x of [...(a||[]),...(b||[])]) { if(!x||!x.file_id||seen.has(x.file_id))continue; seen.add(x.file_id); out.push(x); } return out; }
+/** Separate the visible card of one listing from a multi-offer mail. */
+function extractListingMailExcerpt_(body, listingId) {
+  const text = String(body || '');
+  const occurrences = [];
+  const urls = /https?:\/\/[^\s<>"']+/gi;
+  let found;
+  while ((found = urls.exec(text)) !== null) {
+    const id = getMailListingId(found[0].replace(/[),.;]+$/, ''));
+    if (id) occurrences.push({ id, at: found.index });
+  }
+  const start = occurrences.findIndex(item => item.id === listingId);
+  if (start < 0) return '';
+  let end = text.length;
+  for (let i = start + 1; i < occurrences.length; i++) {
+    if (occurrences[i].id !== listingId) { end = occurrences[i].at; break; }
+  }
+  return text.slice(occurrences[start].at, Math.min(end, occurrences[start].at + 2500));
+}
+
 function filterListingDriveFiles_(files, listingId, allowUnassigned) {
   const safePrefix=String(listingId||'').toLowerCase().replace(/[^a-z0-9_-]+/g,'_')+'_';
   return (files||[]).filter(file=>{
