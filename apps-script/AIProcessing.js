@@ -195,6 +195,15 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
         return {status:'retry', reason:'missing_listing_source', listingId};
       }
     }
+    // Keine leeren Anzeigenzeilen erzeugen, wenn weder eine eindeutig
+    // zugeordnete Mailkarte noch ein erreichbarer Inseratstext vorliegt.
+    if (!existingRow && listingCount > 1 && !listingMailText.trim() &&
+        (!preflightPage || preflightPage.status !== 'ok' || !preflightPage.text)) {
+      setAiQueueState_(queue, rowNo, index, 'retry',
+        'Sammelmail: keine sichere Textquelle für Einzelanzeige.',
+        new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
+      return { status: 'retry', reason: 'missing_listing_source', listingId };
+    }
     const listingRow = existingRow || appendListingRow_(sheet, cols, listingId, mailId, listingUrl, subject, q, qi, queueFiles);
     if (existingRow && !sheet.getRange(listingRow, cols['Datensatz-ID'] + 1).getValue()) {
       setListingValue_(sheet, listingRow, cols, 'Datensatz-ID', listingId);
