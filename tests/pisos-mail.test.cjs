@@ -459,3 +459,12 @@ test('Milanuncios unlinked photos, tracking pixels, logos and spoof hosts exclud
   ]) assert.equal(ctx.isPropertyImageUrl(url), false);
   assert.deepEqual(plain(ctx.extractMilanunciosImages({ bild_urls: [milanPhoto, milanPhoto] })), [milanPhoto]);
 });
+
+test('shared-lock recovery retries an orphaned mail immediately but backs off real errors', () => {
+  const ctx = context();
+  const justNow = new Date().toISOString();
+  assert.equal(ctx.mailQueueNeedsRetry({status:'processing',updatedAt:justNow}),true);
+  assert.equal(ctx.mailQueueNeedsRetry({status:'retry',updatedAt:justNow}),false);
+  assert.equal(ctx.mailQueueNeedsRetry({status:'retry',
+    updatedAt:new Date(Date.now()-31*60000).toISOString()}),true);
+});
