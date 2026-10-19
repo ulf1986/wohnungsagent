@@ -519,7 +519,7 @@ function completeAiApiOperation_(data) {
 }
 /** A definite 4xx rejection cannot contain a successful AI result. */
 function recordDefiniteAiFailure_(sheet, row, cols, data, error) {
-  if (!/^OpenAI HTTP 4\d\d(?:\b|$)/.test(String(error && error.message || error))) return;
+  if (!/^(?:OpenAI |API )HTTP 4\d\d(?:\b|$)/.test(String(error && error.message || error))) return;
   const op = data.ai_pipeline && data.ai_pipeline.api_operation;
   if (op && op.status === 'started') {
     op.status = 'rejected';
