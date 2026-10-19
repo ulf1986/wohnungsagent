@@ -22,7 +22,11 @@ const AI_PIPELINE = {
     'KI Wiederholung ab UTC',
     'KI Versuche',
     'KI Abgeschlossene Anzeigen JSON',
-    'KI Aktuelle Anzeigen-ID'
+    'KI Aktuelle Anzeigen-ID',
+    'KI Lauf-ID',
+    'KI Arbeitsschritt',
+    'KI Schritt gestartet UTC',
+    'KI Ergebnis gespeichert UTC'
   ],
   statusReady: 'ready_for_ai',
   batchImageCount: 5,
@@ -68,13 +72,13 @@ function processNextAiListing(ss, queue) {
     if (!Number.isFinite(receivedAt) || receivedAt > now || now - receivedAt >= AI_PIPELINE.maxMailAgeHours * 3600000) continue;
     if (String(row[qi['Queue Bildstatus']] || '') !== AI_PIPELINE.statusReady) continue;
     const state = String(row[index.status] || 'pending');
-    if (state === 'completed' || state === 'duplicate' || state === 'blocked') continue;
+    if (state === 'completed' || state === 'duplicate' || state === 'blocked' || state === 'needs_review') continue;
     const retryAt = Date.parse(String(row[index.retryAt] || ''));
     if (Number.isFinite(retryAt) && retryAt > now) continue;
-    if (state === 'processing') {
-      const updated = Date.parse(String(row[index.updated] || ''));
-      if (Number.isFinite(updated) && now - updated < AI_PIPELINE.processingTimeoutMinutes * 60000) continue;
-    }
+    // Called only while the shared ScriptLock is held. A previous 'processing'
+    // value therefore belongs to an execution that is no longer holding it.
+    // Reopen its persisted per-listing stage; an uncertain API call is stopped
+    // by beginAiApiOperation_ rather than blindly repeated.
     target = { rowNumber: i + 2, values: row };
     break;
   }
@@ -114,6 +118,7 @@ function processNextAiListing(ss, queue) {
   queue.getRange(target.rowNumber, index.activeId + 1).setValue(activeId);
   queue.getRange(target.rowNumber, index.listingId + 1).setValue(activeId);
   const result = processAiQueueRow_(ss, queue, target, qi, index);
+  markAiQueueProgress_(queue, target.rowNumber, index, String(result.status || 'unknown'), false);
   if (['completed','no_images','blocked','unavailable','duplicate'].includes(result.status)) {
     if (!done.includes(activeId)) done.push(activeId);
     queue.getRange(target.rowNumber, index.doneIds + 1).setValue(JSON.stringify(done));
@@ -146,6 +151,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
   const safePrefix = String(listingId).toLowerCase().replace(/[^a-z0-9_-]+/g, '_') + '_';
   const queueFiles = filterListingDriveFiles_(allQueueFiles, listingId, oneListing);
   setAiQueueState_(queue, rowNo, index, 'processing', '', '');
+  markAiQueueProgress_(queue, rowNo, index, 'start:' + listingId, true);
   try {
     if (!mailId || !links.length) throw new Error('Queue-Eintrag ohne Gmail-ID oder Inseratslink.');
     if (!listingId) throw new Error('Anzeigen-ID konnte aus dem Portal-Link nicht ermittelt werden.');
@@ -223,9 +229,17 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
           new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
         return { status: 'retry', reason: 'missing_listing_source', listingId };
       }
-      const emailResult = callListingExtraction_(config, 'email_and_page',
-        oneListing ? subject : 'Inserat ' + listingId,
-        listingMailText, listingUrl, page.status === 'ok' ? page.text : '', null);
+      beginAiApiOperation_(sheet, listingRow, cols, data, 'email_and_page', listingId);
+      markAiQueueStep_(queue, rowNo, index, 'KI Text-API');
+      let emailResult;
+      try {
+        emailResult = callListingExtraction_(config, 'email_and_page',
+          oneListing ? subject : 'Inserat ' + listingId,
+          listingMailText, listingUrl, page.status === 'ok' ? page.text : '', null);
+      } catch (error) {
+        recordDefiniteAiFailure_(sheet, listingRow, cols, data, error);
+        throw error;
+      }
       const checked = acceptListingPageResult_(emailResult, page, listingId);
       data.ai_pipeline.email_source_id = mailId;
       data.ai_pipeline.page_checked = true;
@@ -245,6 +259,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       data.ai_pipeline.provenance_version = 1;
       data.ai_pipeline.stage = 'images';
       data.ai_pipeline.updated_at = new Date().toISOString();
+      completeAiApiOperation_(data);
       applyListingFields_(sheet, listingRow, cols, checked.fields, 'email_and_page');
       applyListingPresentation_(sheet, listingRow, cols, checked.fields, listingUrl, data);
       writeListingJson_(sheet, listingRow, cols, data);
@@ -264,7 +279,15 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       data.ai_pipeline.page_status = page.status;
       data.ai_pipeline.page_http_status = page.httpStatus || null;
       if (page.status === 'ok' && page.text) {
-        const pageResult = callListingExtraction_(config, 'listing_page', subject, '', listingUrl, page.text, emailFields);
+        beginAiApiOperation_(sheet, listingRow, cols, data, 'listing_page', listingId);
+        markAiQueueStep_(queue, rowNo, index, 'KI Portalseite-API');
+        let pageResult;
+        try {
+          pageResult = callListingExtraction_(config, 'listing_page', subject, '', listingUrl, page.text, emailFields);
+        } catch (error) {
+          recordDefiniteAiFailure_(sheet, listingRow, cols, data, error);
+          throw error;
+        }
         const checked = acceptListingPageResult_(pageResult, page, listingId, emailFields);
         data.ai_pipeline.page_check = checked.pageCheck;
         data.ai_pipeline.page_fields = checked.pageFields;
@@ -285,6 +308,8 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       }
       data.ai_pipeline.stage = 'images';
       data.ai_pipeline.updated_at = new Date().toISOString();
+      if (data.ai_pipeline.api_operation && data.ai_pipeline.api_operation.status === 'started')
+        completeAiApiOperation_(data);
       writeListingJson_(sheet, listingRow, cols, data);
       if (data.ai_pipeline.page_check.status === 'unavailable') {
         blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,data.ai_pipeline.page_check.reason);
@@ -331,7 +356,16 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     const batch = buildImageBatch_(pending);
     if (!batch.length) throw new Error('Keine zugänglichen Bilddateien für den nächsten Batch.');
     const prior = (data.image_reviews || []).filter(r => files.some(f => f.file_id === r.file_id));
-    const review = callImageReview_(config, batch, prior);
+    beginAiApiOperation_(sheet, listingRow, cols, data, 'image_review', listingId,
+      { file_ids: batch.map(file => file.file_id) });
+    markAiQueueStep_(queue, rowNo, index, 'KI Bild-API (' + batch.length + ' Bilder)');
+    let review;
+    try {
+      review = callImageReview_(config, batch, prior);
+    } catch (error) {
+      recordDefiniteAiFailure_(sheet, listingRow, cols, data, error);
+      throw error;
+    }
     validateImageReview_(review, batch.length);
     for (const item of review.images) {
       const file = batch[item.index - 1];
@@ -353,6 +387,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     data.ai_analysis_status = files.every(f => data.analyzed_file_ids.includes(f.file_id)) ? 'completed' : 'processing';
     data.ai_pipeline.stage = data.ai_analysis_status === 'completed' ? 'completed' : 'images';
     data.ai_pipeline.updated_at = new Date().toISOString();
+    completeAiApiOperation_(data);
     writeListingJson_(sheet, listingRow, cols, data);
     if (data.ai_analysis_status === 'completed') {
       finalizeAiListing_(sheet, listingRow, cols, data, emailFields);
@@ -364,6 +399,30 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     }
     return { status: data.ai_analysis_status, listingId, analyzed: data.analyzed_file_ids.length, total: files.length };
   } catch (error) {
+    // A timeout between an API request and its saved response cannot safely
+    // be retried: OpenAI may have completed (and billed) the request.
+    // Do not run another API call until this listing is reconciled.
+    let uncertain = false;
+    try {
+      const sheet = ss.getSheetByName(AI_PIPELINE.listingSheetName);
+      const cols = getListingColumns_(sheet);
+      const existing = findListingRow_(sheet, cols, listingId, listingUrl);
+      if (existing) {
+        const latest = parseAiListingJson_(sheet.getRange(existing, cols['Bildanalyse JSON'] + 1).getValue());
+        uncertain = !!(latest.ai_pipeline && latest.ai_pipeline.api_operation &&
+          latest.ai_pipeline.api_operation.status === 'started');
+      }
+    } catch (lookupError) {
+      // Keep the original exception and conservative retry behavior.
+      console.warn('KI-Statusprüfung: ' + lookupError.message);
+    }
+    if (uncertain) {
+      const message = 'KI-API-Ergebnis ungeklärt; vor erneutem API-Aufruf prüfen: ' + error.message;
+      setAiQueueState_(queue, rowNo, index, 'needs_review', message, '');
+      logImageDiagnostic('ai_uncertain', { mail_id: mailId, listing_id: listingId,
+        status: 'needs_review', level: 'ERROR', error: message });
+      return { status: 'needs_review', listingId, error: message };
+    }
     const attempt = Number(q[index.attempts] || 0) + 1;
     const waitMinutes = Math.min(360, AI_PIPELINE.retryBaseMinutes * Math.pow(2, Math.min(attempt - 1, 4)));
     const retryAt = new Date(Date.now() + waitMinutes * 60000).toISOString();
@@ -398,7 +457,9 @@ function aiQueueColumnIndex_(queue) {
     status: at('KI Verarbeitungsstatus'), error: at('KI Fehler'), updated: at('KI Aktualisiert UTC'),
     listingId: at('KI Datensatz-ID'), retryAt: at('KI Wiederholung ab UTC'),
     attempts: at('KI Versuche'), doneIds: at('KI Abgeschlossene Anzeigen JSON'),
-    activeId: at('KI Aktuelle Anzeigen-ID')
+    activeId: at('KI Aktuelle Anzeigen-ID'), runId: at('KI Lauf-ID'),
+    step: at('KI Arbeitsschritt'), stepStarted: at('KI Schritt gestartet UTC'),
+    resultSaved: at('KI Ergebnis gespeichert UTC')
   };
 }
 
@@ -411,6 +472,60 @@ function setAiQueueState_(sheet, row, ix, status, error, retryAt, attempts) {
   SpreadsheetApp.flush();
   logImageDiagnostic('ai_queue', { row, status, error: error || '',
     listing_id: String(sheet.getRange(row, ix.listingId + 1).getValue() || '') });
+}
+
+/**
+ * The shared ScriptLock protects concurrent writes. Persisted work steps give
+ * operators a durable run ID and explain which result was last confirmed.
+ */
+function markAiQueueProgress_(queue, rowNo, ix, step, started) {
+  const now = new Date().toISOString();
+  const id = started ? now + '_' + Math.random().toString(36).slice(2, 9) :
+    String(queue.getRange(rowNo, ix.runId + 1).getValue() || '');
+  const start = started ? now :
+    String(queue.getRange(rowNo, ix.stepStarted + 1).getValue() || '');
+  queue.getRange(rowNo, ix.runId + 1, 1, 4).setValues([[
+    id, step, start, started ? '' : now
+  ]]);
+  SpreadsheetApp.flush();
+  logImageDiagnostic('ai_step', { row: rowNo, step, status: started ? 'started' : 'saved' });
+}
+function markAiQueueStep_(queue, rowNo, ix, step) {
+  queue.getRange(rowNo, ix.step + 1).setValue(step);
+}
+/**
+ * Write-ahead journal for expensive API requests. A 'started' operation
+ * without a saved response is deliberately NOT retried automatically.
+ * Exactly-once OpenAI execution is impossible without provider idempotency.
+ */
+function beginAiApiOperation_(sheet, row, cols, data, kind, listingId, detail) {
+  data.ai_pipeline = data.ai_pipeline || {};
+  const prior = data.ai_pipeline.api_operation;
+  if (prior && prior.status === 'started') {
+    throw new Error('Voriger ' + prior.kind + '-Aufruf ohne gespeichertes Ergebnis');
+  }
+  data.ai_pipeline.api_operation = Object.assign({
+    kind, listing_id: listingId, status: 'started', started_at: new Date().toISOString()
+  }, detail || {});
+  writeListingJson_(sheet, row, cols, data);
+}
+function completeAiApiOperation_(data) {
+  const op = data.ai_pipeline && data.ai_pipeline.api_operation;
+  if (op && op.status === 'started') {
+    op.status = 'stored';
+    op.result_saved_at = new Date().toISOString();
+  }
+}
+/** A definite 4xx rejection cannot contain a successful AI result. */
+function recordDefiniteAiFailure_(sheet, row, cols, data, error) {
+  if (!/^OpenAI HTTP 4\\d\\d(?:\\b|$)/.test(String(error && error.message || error))) return;
+  const op = data.ai_pipeline && data.ai_pipeline.api_operation;
+  if (op && op.status === 'started') {
+    op.status = 'rejected';
+    op.error = String(error.message).slice(0, 200);
+    op.result_saved_at = new Date().toISOString();
+    writeListingJson_(sheet, row, cols, data);
+  }
 }
 
 function getOpenAiConfig_() {
