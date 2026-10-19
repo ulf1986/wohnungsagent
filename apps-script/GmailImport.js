@@ -701,14 +701,15 @@ function mailQueueNeedsRetry(item) {
     return true;
   }
 
+  // The caller holds the global ScriptLock. If this message still says
+  // 'processing', its previous owner can no longer be running concurrently.
+  // Resume immediately and reuse its already persisted Drive references.
+  if (item.status === 'processing') return true;
+
+  // Explicit retry errors still back off to avoid hammering broken portals.
   const time = Date.parse(item.updatedAt || '');
   if (!Number.isFinite(time)) return true;
-
-  const timeout = item.status === 'processing'
-    ? MAIL_IMPORT.processingTimeoutMinutes
-    : MAIL_IMPORT.retryDelayMinutes;
-
-  return Date.now() - time >= timeout * 60000;
+  return Date.now() - time >= MAIL_IMPORT.retryDelayMinutes * 60000;
 }
 
 function createMailQueueRow(sheet, mail) {
