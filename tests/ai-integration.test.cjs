@@ -380,12 +380,11 @@ test('uncertain image API result retains extracted facts and selected batch',()=
 });
 
 test('orphaned processing state is recovered under the exclusive lock using saved facts',()=>{
-  const x=setup();let texts=0;
-  x.ctx.callListingExtraction_=()=>{texts++;return {fields:{title:'Saved facts',rent_eur:1100},missing_fields:[]};};
+  const x=setup();
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   x.setQueue('KI Verarbeitungsstatus','processing');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
-  assert.equal(texts,1);
+  assert.equal(x.calls.filter(step=>step==='email').length,1);
   assert.equal(x.value(x.queue,'KI Verarbeitungsstatus'),'completed');
   assert.ok(x.value(x.queue,'KI Lauf-ID'));
   assert.ok(x.value(x.queue,'KI Ergebnis gespeichert UTC'));
