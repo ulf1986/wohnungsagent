@@ -475,3 +475,60 @@ test('shared-lock recovery retries an orphaned mail immediately but backs off re
   assert.equal(ctx.mailQueueNeedsRetry({status:'retry',
     updatedAt:new Date(Date.now()-31*60000).toISOString()}),true);
 });
+
+test('incremental Gmail discovery checkpoints and skips redundant scans for 15 minutes',()=>{
+  const ctx=context(), values=new Map(), calls=[];
+  const msg={getId:()=> 'new-1',getDate:()=>new Date(),getSubject:()=> 'alert'};
+  ctx.PropertiesService={getScriptProperties:()=>({
+    getProperty:k=>values.get(k)||null, setProperty:(k,v)=>values.set(k,v)
+  })};
+  ctx.GmailApp={search:(query)=>{calls.push(query);return [{getMessages:()=>[msg]}];},getMessageById:()=>null};
+  ctx.logImageDiagnostic=()=>{};
+  const first=ctx.collectMailCandidates_({},new Set());
+  assert.equal(first.length,1);
+  assert.equal(calls.length,1);
+  assert.ok(first.scanCheckpoint);
+  assert.ok(calls[0].includes('label:'));
+  values.set(ctx.MAIL_IMPORT.gmailCursorKey,first.scanCheckpoint);
+  values.set(ctx.MAIL_IMPORT.gmailReconcileKey,first.scanCheckpoint);
+  const second=ctx.collectMailCandidates_({},new Set());
+  assert.equal(second.length,0);
+  assert.equal(calls.length,1);
+});
+
+test('known retry is loaded by Gmail message ID without rescanning conversations',()=>{
+  const ctx=context(), values=new Map(), calls=[];
+  const msg={getId:()=> 'retry-1',getDate:()=>new Date()};
+  const now=new Date().toISOString();
+  values.set('WOHNUNGSAGENT_GMAIL_DISCOVERY_UTC',now);
+  values.set('WOHNUNGSAGENT_GMAIL_RECONCILE_UTC',now);
+  ctx.PropertiesService={getScriptProperties:()=>({
+    getProperty:k=>values.get(k)||null,setProperty:(k,v)=>values.set(k,v)
+  })};
+  ctx.GmailApp={search:()=>{throw new Error('Unnecessary full search');},
+    getMessageById:id=>{calls.push(id);return msg;}};
+  ctx.logImageDiagnostic=()=>{};
+  const got=ctx.collectMailCandidates_({'retry-1':{
+    status:'retry',receivedAt:now,
+    updatedAt:new Date(Date.now()-31*60000).toISOString()
+  }},new Set());
+  assert.deepEqual(Array.from(got.map(x=>x.getId())),['retry-1']);
+  assert.deepEqual(calls,['retry-1']);
+});
+
+test('incomplete Gmail discovery does not publish a new cursor',()=>{
+  const ctx=context(), propWrites=[], msg=i=>({
+    getId:()=> 'mail-'+i,getDate:()=>new Date()
+  });
+  ctx.PropertiesService={getScriptProperties:()=>({
+    getProperty:()=>null,setProperty:(k,v)=>propWrites.push([k,v])
+  })};
+  ctx.GmailApp={search:()=>Array.from({length:16},(_,i)=>({
+    getMessages:()=>[msg(i)]
+  })),getMessageById:()=>null};
+  ctx.logImageDiagnostic=()=>{};
+  const candidates=ctx.collectMailCandidates_({},new Set());
+  assert.equal(candidates.length,15);
+  assert.equal(candidates.scanCheckpoint,undefined);
+  assert.deepEqual(propWrites,[]);
+});
