@@ -132,7 +132,7 @@ function runGmailImagePipeline() {
     });
 
     const stats = {
-      candidates: candidates.length,
+      candidates: selected.length,
       processed: 0,
       completed: 0,
       no_images: 0,
@@ -142,6 +142,7 @@ function runGmailImagePipeline() {
       blocked: 0
     };
 
+    let scanPersisted = true;
     for (const mail of selected) {
       // Do not start another costly mail/image download near the runtime budget.
       // Remaining messages stay queued for the next trigger.
@@ -151,6 +152,7 @@ function runGmailImagePipeline() {
           status: 'deferred', reason: 'Zeitbudget vor nächstem Mailimport',
           remaining: selected.length - stats.processed
         });
+        scanPersisted = false;
         break;
       }
       const mailId = mail.getId();
@@ -460,10 +462,18 @@ function runGmailImagePipeline() {
             queue, row, 'retry',
             error.message, ''
           );
+        } else {
+          scanPersisted = false;
         }
       }
     }
 
+    if (scanPersisted && selected.scanCheckpoint) {
+      const p = PropertiesService.getScriptProperties();
+      p.setProperty(MAIL_IMPORT.gmailCursorKey, selected.scanCheckpoint);
+      if (selected.reconciled) p.setProperty(MAIL_IMPORT.gmailReconcileKey, selected.scanCheckpoint);
+      logImageDiagnostic('gmail_checkpoint', { status: 'saved' });
+    }
     console.log('Gmail: ' + JSON.stringify(stats));
     if (imageDiagnosticRun) {
       imageDiagnosticRun.mailId = '';
@@ -712,12 +722,8 @@ function collectMailCandidates_(existing, processed) {
     result.sort((a, b) => a.getDate().getTime() - b.getDate().getTime());
     // Never advance the cursor past messages that could not be enqueued.
     scanComplete = !limited && result.length <= MAIL_IMPORT.maxMessagesPerRun;
-    if (scanComplete) {
-      props.setProperty(key, new Date(now).toISOString());
-      if (reconcileDue) props.setProperty(reconcileKey, new Date(now).toISOString());
-    }
     logImageDiagnostic('gmail_discovery', {
-      status: scanComplete ? 'checkpoint_saved' : 'backlog_retained',
+      status: scanComplete ? 'checkpoint_ready' : 'backlog_retained',
       count: discovered, files: threads.length,
       reason: limited ? 'thread_limit' : result.length > MAIL_IMPORT.maxMessagesPerRun ? 'mail_limit' : ''
     });
@@ -734,7 +740,12 @@ function collectMailCandidates_(existing, processed) {
       }
     }
   }
-  return result.slice(0, MAIL_IMPORT.maxMessagesPerRun);
+  const chosen = result.slice(0, MAIL_IMPORT.maxMessagesPerRun);
+  if (scanDue && scanComplete) {
+    chosen.scanCheckpoint = new Date(now).toISOString();
+    chosen.reconciled = reconcileDue;
+  }
+  return chosen;
 }
 
 /**
