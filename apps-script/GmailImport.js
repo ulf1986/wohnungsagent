@@ -204,35 +204,55 @@ function runGmailImagePipeline() {
           observed_id: propertyIds, status: propertyIds.length ? 'identified' : 'no_listing_id'
         });
         const blockedInMail = propertyIds.filter(id => blockedIds.has(id));
-        if (blockedInMail.length) {
-          const allBlocked = blockedInMail.length === propertyIds.length;
-          // Bei mehreren Immobilien in einer Mail sind die HTML-Bilder
-          // keiner einzelnen ID verlässlich zugeordnet. Sicher überspringen.
-          setMailQueueStatus(queue, row,
-            allBlocked ? 'blocked' : 'retry',
-            (allBlocked ? 'Sperrliste: ' : 'Gemischte Mail, keine sichere Bildzuordnung: ') +
-              blockedInMail.join(', '), allBlocked ? new Date().toISOString() : '');
+        if (blockedInMail.length === propertyIds.length && propertyIds.length) {
+          setMailQueueStatus(queue, row, 'blocked',
+            'Sperrliste: ' + blockedInMail.join(', '), new Date().toISOString());
           stats.blocked++;
-          console.log(mailId + ': Bilddownload unterbunden wegen Sperrliste ' +
-            blockedInMail.join(', '));
           continue;
         }
-
-        const mailImageUrls =
-          extractPropertyImageUrls(html);
+        // Eine gesperrte Anzeige darf nicht die übrigen Angebote derselben Mail stoppen.
+        const eligibleIds = propertyIds.filter(id => !blockedIds.has(id));
+        const allMailImageUrls = extractPropertyImageUrls(html);
         const linkedImages = [
           ...extractPisosMailImages(html),
           ...extractImmoScoutMailImages(html),
           ...extractMilanunciosMailImages(html)
         ];
-
+        const photoOwners = url => [...new Set(linkedImages
+          .filter(image => image.source_url === url)
+          .map(image => image.listing_id).filter(Boolean))];
+        const isLinkedPhoto = url =>
+          isPisosPropertyImageUrl(url) ||
+          isImmoScoutPropertyImageUrl(url) ||
+          isMilanunciosPropertyImageUrl(url);
+        const ambiguousPhotos = allMailImageUrls.filter(url => photoOwners(url).length > 1);
+        // In Sammelmails ausschließlich eindeutig einem nicht gesperrten
+        // Inserat zugewiesene Mailfotos herunterladen.
+        const mailImageUrls = propertyIds.length === 1
+          ? allMailImageUrls
+          : allMailImageUrls.filter(url => {
+              const owners = photoOwners(url);
+              return owners.length === 1 && eligibleIds.includes(owners[0]);
+            });
+        const fileOwner = file => {
+          if (isLinkedPhoto(file.source_url)) {
+            const owners = photoOwners(file.source_url);
+            return owners.length === 1 ? owners[0] : '';
+          }
+          const direct = file.listing_id || getMailListingId(file.listing_url || '');
+          if (direct) return direct;
+          const match = String(file.name || '').toLowerCase().match(
+            /^(idealista|fotocasa|yaencontre|pisos|immoscout|milanuncios)_(\d+)_/
+          );
+          return match ? match[1] + ':' + match[2] : '';
+        };
         const oldFiles = parseMailQueueFiles(
           queue.getRange(row, 14).getValue()
         ).filter(file => isPropertyImageUrl(file.source_url) &&
-          (!(isPisosPropertyImageUrl(file.source_url) ||
-              isImmoScoutPropertyImageUrl(file.source_url) ||
-              isMilanunciosPropertyImageUrl(file.source_url)) ||
-            linkedImages.some(image => image.source_url === file.source_url)));
+          (propertyIds.length === 1 ||
+            eligibleIds.includes(fileOwner(file))) &&
+          (!isLinkedPhoto(file.source_url) ||
+            photoOwners(file.source_url).length === 1));
 
         const allFiles = [...oldFiles];
         const fileIds = new Set(
@@ -241,6 +261,7 @@ function runGmailImagePipeline() {
 
         let uploaded = 0;
         const errors = [...milan.errors];
+        if (ambiguousPhotos.length) errors.push('Bild ohne eindeutige Inseratszuordnung');
         logImageDiagnostic('mail_images', {
           images: mailImageUrls.length, files: oldFiles.length, links: linkedImages.length,
           status: mailImageUrls.length ? 'found' : 'no_property_images'
@@ -258,7 +279,7 @@ function runGmailImagePipeline() {
           )
         ];
 
-        for (const listingId of idealistaIds) {
+        for (const listingId of idealistaIds.filter(id => eligibleIds.includes(id))) {
           const relatedFiles = allFiles.filter(
             file =>
               String(file.name || '').startsWith(
@@ -393,18 +414,17 @@ function runGmailImagePipeline() {
           status = 'completed';
         }
 
-        // Nur eine eindeutig zugeordnete Immobilie mit Drive-Bildern
-        // darf in die KI-Queue. Bildlose Angebote bleiben im Retry.
+        // Sammelmails dürfen in die KI-Queue: dort wird JEDE ID einzeln
+        // verarbeitet. Ohne eindeutig zugewiesenes Bild nur Text/Portal nutzen.
         const oneListing = propertyIds.length === 1;
-        const ready = status === 'completed' &&
-          allFiles.some(file => file.file_id && file.source_url) &&
-          (oneListing || allFiles.every(file =>
-            !file.file_id || !isPropertyImageUrl(file.source_url) ||
-            (file.listing_id && propertyIds.includes(file.listing_id))));
+        const safeOwnership = oneListing || allFiles.every(file =>
+          !file.file_id || !isPropertyImageUrl(file.source_url) ||
+          eligibleIds.includes(fileOwner(file)));
+        const ready = eligibleIds.length > 0 && safeOwnership &&
+          (status === 'completed' || (!oneListing && status === 'no_images'));
         if (ready) status = 'ready_for_ai';
-        else if (status === 'completed') status = 'retry';
-        else if (status === 'no_images' || status === 'gallery_unavailable')
-          status = 'retry';
+        else if (status === 'completed' || status === 'no_images' ||
+                 status === 'gallery_unavailable') status = 'retry';
 
         setMailQueueStatus(
           queue,
