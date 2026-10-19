@@ -279,7 +279,7 @@ function runGmailImagePipeline() {
           )
         ];
 
-        for (const listingId of idealistaIds.filter(id => eligibleIds.includes(id))) {
+        for (const listingId of idealistaIds.filter(id => eligibleIds.includes('idealista:' + id))) {
           const relatedFiles = allFiles.filter(
             file =>
               String(file.name || '').startsWith(
