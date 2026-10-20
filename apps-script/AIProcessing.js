@@ -869,8 +869,8 @@ function assessListingEligibility_(f, data) {
     ' ' + (pipeline.page_fields && (pipeline.page_fields.rental_type || '') || '') +
     ' ' + String(f.rental_type || '');
   const normalized = evidence.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-  const seasonal = /\\b(alquiler\\s+(?:de\\s+)?temporada|alquiler\\s+temporal|arrendamiento\\s+de\\s+temporada|uso\\s+distinto\\s+de\\s+vivienda\\s+habitual|alquiler\\s+vacacional|estancia\\s+temporal|short[ -]term|saison-\\/kurzzeitmiete|kurzzeitmiete)\\b/i;
-  const positive = seasonal.test(normalized.replace(/\\b(?:no|sin|nicht|kein(?:e)?)\\s+(?:se\\s+)?(?:alquila|alquiler|es|para)\\s+(?:por\\s+)?temporada\\b/g,''));
+  const seasonal = /\b(alquiler\s+(?:de\s+)?temporada|alquiler\s+temporal|arrendamiento\s+de\s+temporada|uso\s+distinto\s+de\s+vivienda\s+habitual|alquiler\s+vacacional|estancia\s+temporal|short[ -]term|saison-\/kurzzeitmiete|kurzzeitmiete)\b/i;
+  const positive = seasonal.test(normalized.replace(/\b(?:no\s+se\s+alquila|no\s+alquiler|sin\s+alquiler)\s+(?:por\s+|de\s+)?temporada\b/g,''));
   const reasons=[];
   const rent = finiteNumber_(f.rent_eur), area = finiteNumber_(f.area_m2), rooms=finiteNumber_(f.rooms);
   if (rent !== '' && Number(rent) < 800) reasons.push('Miete unter 800 €');
@@ -885,6 +885,36 @@ function assessListingEligibility_(f, data) {
   if (f.long_term !== true || f.seasonal_or_short_term !== false) missing.push('Langzeitmiete nicht bestätigt');
   if (missing.length) return {status:'Prüfung erforderlich',reason:'Offen: '+missing.join(', '),seasonal:positive};
   return {status:'Geeignet',reason:'Langzeitmiete bestätigt; Pflichtangaben vorhanden',seasonal:false};
+}
+
+/** Reclassify existing listings from stored JSON without additional AI calls. */
+function reclassifyExistingListings() {
+  const lock=LockService.getScriptLock();
+  if(!lock.tryLock(1000))return {status:'busy'};
+  try {
+    const ss=SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_());
+    const sheet=ss.getSheetByName('Anzeigen');
+    if(!sheet)throw new Error('Anzeigenblatt fehlt');
+    const headers=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+    const cols={};headers.forEach((h,i)=>cols[h]=i);
+    let updated=0,skipped=0;
+    for(let row=2;row<=sheet.getLastRow();row++){
+      if(!sheet.getRange(row,cols['Datensatz-ID']+1).getValue())continue;
+      let data;try{data=JSON.parse(String(sheet.getRange(row,cols['Bildanalyse JSON']+1).getValue()||''))}catch(e){skipped++;continue;}
+      const p=data.ai_pipeline||{};
+      const fields=data.extracted_fields||mergeMissingOnly_(p.email_fields||{},p.page_fields||{});
+      if(!fields||!Object.keys(fields).length){skipped++;continue;}
+      const eligibility=assessListingEligibility_(fields,data);
+      const old=String(sheet.getRange(row,cols['Status']+1).getValue()||'');
+      const status=['Nicht mehr verfügbar','Verfügbarkeit ungeklärt'].includes(old)?old:eligibility.status;
+      setListingValue_(sheet,row,cols,'Status',status);
+      setListingValue_(sheet,row,cols,'Mietprüfung',eligibility.reason);
+      const score=scoreRentPerM2_(fields.rent_eur,fields.area_m2);
+      setListingValue_(sheet,row,cols,'Preisbewertung (0–100)',score===null?'':score);
+      updated++;
+    }
+    return {status:'ok',updated,skipped};
+  }finally{lock.releaseLock();}
 }
 
 function rentalDecision_(f) {
