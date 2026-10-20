@@ -518,7 +518,7 @@ test('known retry is loaded by Gmail message ID without rescanning conversations
 
 test('incomplete Gmail discovery does not publish a new cursor',()=>{
   const ctx=context(), propWrites=[], msg=i=>({
-    getId:()=> 'mail-'+i,getDate:()=>new Date()
+    getId:()=> 'mail-'+i,getDate:()=>new Date(Date.now()-1000)
   });
   ctx.PropertiesService={getScriptProperties:()=>({
     getProperty:()=>null,setProperty:(k,v)=>propWrites.push([k,v])
