@@ -8,12 +8,13 @@
  * - Drive.gs
  * - IdealistaGalerie.gs
  *
- * Gmail ausschließlich lesen.
+ * Gmail lesen; nach gesicherter Queue-Übernahme Suchauftrags-Mails in Papierkorb verschieben.
  * Keine E-Mails verschicken.
  */
 
 const MAIL_IMPORT = {
   label: 'Wohnungssuche/Suchaufträge',
+  trashAfterQueueReady: true,
   sheetName: 'Verarbeitung',
 
   lookbackDays: 2,
@@ -207,6 +208,7 @@ function runGmailImagePipeline() {
           setMailQueueStatus(queue, row, 'blocked',
             'Sperrliste: ' + blockedInMail.join(', '), new Date().toISOString());
           stats.blocked++;
+          trashQueuedSearchMail_(mail, 'blocked');
           continue;
         }
         // Eine gesperrte Anzeige darf nicht die übrigen Angebote derselben Mail stoppen.
@@ -443,6 +445,7 @@ function runGmailImagePipeline() {
 
         if (status === 'ready_for_ai') {
           stats.completed++;
+          trashQueuedSearchMail_(mail, status);
         } else if (status === 'no_images') {
           stats.no_images++;
         } else if (
@@ -668,6 +671,20 @@ function readPreviouslyProcessedMailIds(sheet) {
  *
  * Calling this requires the pipeline-wide ScriptLock.
  */
+/** Never trash retry or unfinished messages. Queue and image metadata are saved first. */
+function trashQueuedSearchMail_(mail, status) {
+  if (!MAIL_IMPORT.trashAfterQueueReady ||
+      !['ready_for_ai','blocked'].includes(status)) return false;
+  try {
+    mail.moveToTrash();
+    logImageDiagnostic('gmail_cleanup', {status:'trashed',mail_id:mail.getId(),reason:status});
+    return true;
+  } catch(error) {
+    logImageDiagnostic('gmail_cleanup', {status:'failed',level:'WARN',mail_id:mail.getId(),error:String(error.message||error)});
+    return false;
+  }
+}
+
 function collectMailCandidates_(existing, processed) {
   const now = Date.now();
   const cutoff = now - MAIL_IMPORT.lookbackDays * 86400000;
