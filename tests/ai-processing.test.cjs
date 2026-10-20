@@ -13,13 +13,13 @@ vm.runInNewContext(
 const call = (expression) => vm.runInContext(expression, context);
 
 test('Málaga reference: price ratings are independent 0–100 integers',()=>{
-  const values=[[10,100],[12,90],[14,75],[16.5,50],[18,30],[20,10],[22,0]];
+  const values=[[5,100],[8,94],[10,86],[12,76],[14,64],[16.5,50],[18,43],[20,34],[22,26],[25,17],[30,9],[40,0]];
   values.forEach(([price,rating])=>{
     assert.equal(call('scoreRentPerM2_('+(price*100)+',100)'),rating);
   });
-  assert.equal(call('scoreRentPerM2_(1200, 80)'),65);
+  assert.equal(call('scoreRentPerM2_(1200, 80)'),58);
   assert.equal(call('scoreRentPerM2_(500,100)'),100);
-  assert.equal(call('scoreRentPerM2_(2500,100)'),0);
+  assert.equal(call('scoreRentPerM2_(2500,100)'),17);
   assert.equal(call('scoreRentPerM2_(1200,0)'),null);
   assert.equal(call('scoreRentPerM2_(null,80)'),null);
 });
@@ -27,13 +27,13 @@ test('home rating uses photographs, terrace and pool, not rent or distance',()=>
   const fn="calculateListingScore_";
   const img={images_actually_viewed:4,brightness:5,space:4,furniture_condition:5,care_renovation:5};
   const a=call(fn+"("+JSON.stringify({rent_eur:1000,area_m2:100,terrace:true,pool:false,distance_km_approx:1})+","+JSON.stringify(img)+")");
-  assert.equal(a.priceScore,100);
+  assert.equal(a.priceScore,86);
   assert.equal(a.imagePoints,80);
   assert.equal(a.homeScore,90);
   assert.equal(a.coverage,100);
   const b=call(fn+"("+JSON.stringify({rent_eur:2200,area_m2:100,terrace:true,pool:false,distance_km_approx:9})+","+JSON.stringify(img)+")");
   assert.equal(b.homeScore,a.homeScore);
-  assert.equal(b.priceScore,0);
+  assert.equal(b.priceScore,26);
   const unknown=call(fn+"({rent_eur:null,area_m2:null,terrace:null,pool:null}, {})");
   assert.equal(unknown.homeScore,null);
   assert.equal(unknown.priceScore,null);
