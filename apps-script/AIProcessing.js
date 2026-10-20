@@ -760,6 +760,7 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   const merged = mergeMissingOnly_(emailFields || {}, data.ai_pipeline.page_fields || {});
   populateListingLocation_(merged,data);
   const score = calculateListingScore_(merged, image);
+  const eligibility = assessListingEligibility_(merged, data);
   const rentPoints = score.priceScore, imagePoints = score.imagePoints;
   const terracePoints = score.terracePoints, poolPoints = score.poolPoints;
   const coverage = score.coverage;
@@ -783,12 +784,12 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   if (finiteNumber_(merged.rooms) !== '') features.unshift(String(merged.rooms).replace('.', ',') + ' Zimmer');
   setListingValue_(sheet,row,cols,'Merkmale',[...new Set(features.map(x=>String(x).trim()).filter(Boolean))].join('; '));
   setListingValue_(sheet,row,cols,'Offene Angaben',makeOpenFields_(data, merged));
-  setListingValue_(sheet,row,cols,'Mietprüfung',rentalDecision_(merged));
+  setListingValue_(sheet,row,cols,'Mietprüfung',eligibility.reason);
   setListingValue_(sheet,row,cols,'KI-Bewertung','Abgeschlossen');
-  const excluded = (finiteNumber_(merged.rent_eur) !== '' && Number(merged.rent_eur) < 800) || merged.student_only === true || merged.seasonal_or_short_term === true || merged.long_term === false;
-  setListingValue_(sheet,row,cols,'Status', excluded ? 'Ausgeschlossen' : (coverage === 100 ? 'Geprüft' : 'Vorläufig'));
+  setListingValue_(sheet,row,cols,'Status', eligibility.status);
   applyListingPresentation_(sheet,row,cols,merged,String(sheet.getRange(row,cols['Anzeigenlink']+1).getValue() || ''),data);
   setListingValue_(sheet,row,cols,'Einschränkungen',Array.isArray(merged.restrictions) ? merged.restrictions.join('; ') : '');
+  data.eligibility = eligibility;
   data.extracted_fields = merged;
   data.field_sources = Object.assign({}, data.field_sources || {}, {
     email: 'Gmail', listing_page: data.ai_pipeline.page_status === 'ok' ? 'Portal-Seite' : null,
@@ -839,7 +840,9 @@ function scoreRentPerM2_(rent, area) {
       !Number.isFinite(Number(rent)) || !Number.isFinite(Number(area)) ||
       Number(rent) <= 0 || Number(area) <= 0) return null;
   const value = Number(rent) / Number(area);
-  const points = [[10,100],[12,90],[14,75],[16.5,50],[18,30],[20,10],[22,0]];
+  // Broad scale: reserve extremes for truly exceptional €/m² offers.
+  // 10 €/m² is very good but not perfect; 22 €/m² is poor but not zero.
+  const points = [[5,100],[8,94],[10,86],[12,76],[14,64],[16.5,50],[18,43],[20,34],[22,26],[25,17],[30,9],[40,0]];
   if (value <= points[0][0]) return 100;
   if (value >= points[points.length-1][0]) return 0;
   for (let i=1;i<points.length;i++){
@@ -854,6 +857,36 @@ function formatLocation_(direction, km) {
   const names = {N:'Nördlich',NE:'Nordöstlich',E:'Östlich',SE:'Südöstlich',S:'Südlich',SW:'Südwestlich',W:'Westlich',NW:'Nordwestlich'};
   return (names[direction] || direction) + ' · ca. ' + (Math.round(Number(km)*10)/10).toLocaleString('de-DE') + ' km';
 }
+/**
+ * Evidence-based rental eligibility. Unknown facts are not invented.
+ * Seasonal text is checked in the original matched listing evidence as a
+ * defensive layer when model flags are missing or contradictory.
+ */
+function assessListingEligibility_(f, data) {
+  f = f || {};
+  const pipeline = data && data.ai_pipeline || {};
+  const evidence = (pipeline.field_provenance || []).map(x=>String(x.quote || '')).join(' ') +
+    ' ' + (pipeline.page_fields && (pipeline.page_fields.rental_type || '') || '') +
+    ' ' + String(f.rental_type || '');
+  const normalized = evidence.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const seasonal = /\\b(alquiler\\s+(?:de\\s+)?temporada|alquiler\\s+temporal|arrendamiento\\s+de\\s+temporada|uso\\s+distinto\\s+de\\s+vivienda\\s+habitual|alquiler\\s+vacacional|estancia\\s+temporal|short[ -]term|saison-\\/kurzzeitmiete|kurzzeitmiete)\\b/i;
+  const positive = seasonal.test(normalized.replace(/\\b(?:no|sin|nicht|kein(?:e)?)\\s+(?:se\\s+)?(?:alquila|alquiler|es|para)\\s+(?:por\\s+)?temporada\\b/g,''));
+  const reasons=[];
+  const rent = finiteNumber_(f.rent_eur), area = finiteNumber_(f.area_m2), rooms=finiteNumber_(f.rooms);
+  if (rent !== '' && Number(rent) < 800) reasons.push('Miete unter 800 €');
+  if (f.student_only === true) reasons.push('Nur für Studierende');
+  if (f.seasonal_or_short_term === true || f.long_term === false || positive) reasons.push('Saison-/Kurzzeitmiete');
+  if (rooms !== '' && Number(rooms) < 2) reasons.push('Weniger als 2 Zimmer');
+  if (reasons.length) return {status:'Ausgeschlossen',reason:'Ausschluss: '+[...new Set(reasons)].join('; '),seasonal:positive};
+  const missing=[];
+  if (rent === '') missing.push('Miete');
+  if (area === '' || Number(area) <= 0) missing.push('Fläche');
+  if (rooms === '') missing.push('Zimmer');
+  if (f.long_term !== true || f.seasonal_or_short_term !== false) missing.push('Langzeitmiete nicht bestätigt');
+  if (missing.length) return {status:'Prüfung erforderlich',reason:'Offen: '+missing.join(', '),seasonal:positive};
+  return {status:'Geeignet',reason:'Langzeitmiete bestätigt; Pflichtangaben vorhanden',seasonal:false};
+}
+
 function rentalDecision_(f) {
   const issues=[];
   if (f.rent_eur !== null && f.rent_eur !== undefined && f.rent_eur !== '' && Number.isFinite(Number(f.rent_eur)) && Number(f.rent_eur) < 800) issues.push('Miete unter 800 €');
@@ -977,7 +1010,9 @@ function mergeMissingOnly_(first, second) {
 function applyListingFields_(sheet,row,cols,fields,source) {
   const map={ title:'Titel', rent_eur:'Miete', area_m2:'Fläche', rental_type:'Mietart / Laufzeit' };
   for (const [key,header] of Object.entries(map)) if (fields[key]!==null && fields[key]!==undefined) setListingValue_(sheet,row,cols,header,fields[key]);
-  if ((finiteNumber_(fields.rent_eur) !== '' && Number(fields.rent_eur) < 800) || fields.student_only === true || fields.seasonal_or_short_term === true || fields.long_term === false) setListingValue_(sheet,row,cols,'Status','Ausgeschlossen');
+  const eligibility = assessListingEligibility_(fields, null);
+  setListingValue_(sheet,row,cols,'Status',eligibility.status);
+  setListingValue_(sheet,row,cols,'Mietprüfung',eligibility.reason);
 }
 function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   if (isListingBlacklisted_(SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_()),id)) throw new Error('Datensatz-ID steht in der Sperrliste.');
