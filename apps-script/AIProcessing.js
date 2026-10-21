@@ -1098,7 +1098,7 @@ function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
     '',
     'Inserat: '+url,
     'Datensatz: '+id
-  ].join('\\n');
+  ].join('\n');
   try {
     MailApp.sendEmail({to:recipient,subject:'Wohnungsagent: '+title,body:text,name:'Wohnungsagent'});
     data.notification_state='sent';
