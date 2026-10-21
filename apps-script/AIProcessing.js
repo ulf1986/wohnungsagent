@@ -803,6 +803,7 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   data.ai_analysis_status = 'completed';
   if (data.image_review) data.image_review.provisional = false;
   writeListingJson_(sheet,row,cols,data);
+  notifyNewListing_(sheet,row,cols,data,merged,eligibility);
 }
 
 /**
@@ -1064,10 +1065,53 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   assign('Eingang (UTC)',q[qi['Queue Eingang UTC']]||new Date().toISOString());
   assign('E-Mail-ID',mailId); assign('Gmail-Link','https://mail.google.com/mail/u/0/#all/'+mailId);
   assign('KI-Bewertung','In Bearbeitung'); assign('Status','Vorläufig');
-  assign('Bildanalyse JSON',JSON.stringify({ai_analysis_status:'pending',source_email_id:mailId,drive_files:listingFiles||[],analyzed_file_ids:[]}));
+  assign('Bildanalyse JSON',JSON.stringify({ai_analysis_status:'pending',source_email_id:mailId,drive_files:listingFiles||[],analyzed_file_ids:[],notification_eligible:true}));
   sheet.getRange(row,1,1,values.length).setValues([values]);
   return row;
 }
+/** One notification per newly created, non-excluded listing, after extraction is saved.
+ * Old rows are deliberately not backfilled. Failed sends are logged but never
+ * allowed to block the AI pipeline or cause repeated sends on every retry.
+ */
+function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
+  if (!data.notification_eligible || data.notification_state ||
+      eligibility.status === 'Ausgeschlossen') return;
+  const recipient='ulf-marxen@gmx.de';
+  const get=name=>cols[name]===undefined?'':String(sheet.getRange(row,cols[name]+1).getValue()||'');
+  const id=get('Datensatz-ID'), title=get('Titel')||id, url=get('Anzeigenlink');
+  // Mark before sending: at-most-once, even if Apps Script terminates mid-send.
+  data.notification_state='attempted';
+  data.notification_attempted_at=new Date().toISOString();
+  writeListingJson_(sheet,row,cols,data);
+  const text=[
+    'Neue Wohnungsanzeige in Málaga',
+    '',
+    'Titel: '+title,
+    'Portal: '+get('Portal'),
+    'Miete: '+(fields.rent_eur == null?'Unbekannt':fields.rent_eur+' €'),
+    'Fläche: '+(fields.area_m2 == null?'Unbekannt':fields.area_m2+' m²'),
+    'Zimmer: '+(fields.rooms == null?'Unbekannt':fields.rooms),
+    'Wohnungsbewertung: '+(get('Wohnungsbewertung (0–100)')||'Offen')+' / 100',
+    'Preisbewertung: '+(get('Preisbewertung (0–100)')||'Offen')+' / 100',
+    'Status: '+eligibility.status,
+    'Mietprüfung: '+eligibility.reason,
+    '',
+    'Inserat: '+url,
+    'Datensatz: '+id
+  ].join('\\n');
+  try {
+    MailApp.sendEmail({to:recipient,subject:'Wohnungsagent: '+title,body:text,name:'Wohnungsagent'});
+    data.notification_state='sent';
+    data.notification_sent_at=new Date().toISOString();
+    logImageDiagnostic('listing_notification',{status:'sent',listing_id:id});
+  } catch(error) {
+    data.notification_state='failed';
+    data.notification_error=String(error.message||error);
+    logImageDiagnostic('listing_notification',{status:'failed',level:'WARN',listing_id:id,error:data.notification_error});
+  }
+  writeListingJson_(sheet,row,cols,data);
+}
+
 function getListingColumns_(sheet) {
   const headers=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
   const out={}; headers.forEach((h,i)=>{if(h) out[String(h).trim()]=i;});
