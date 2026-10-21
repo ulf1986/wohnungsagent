@@ -165,6 +165,16 @@ function runGmailImagePipeline() {
         scanPersisted = false;
         break;
       }
+      // Search-alert messages should not remain unread after discovery.
+      // Gmail notification settings are independent of the unread flag.
+      try {
+        mail.markRead();
+      } catch (readError) {
+        logImageDiagnostic('gmail_mark_read', {
+          status: 'failed', level: 'WARN', mail_id: mail.getId(),
+          error: String(readError.message || readError)
+        });
+      }
       const mailId = mail.getId();
       if (imageDiagnosticRun) {
         imageDiagnosticRun.mailId = mailId;
