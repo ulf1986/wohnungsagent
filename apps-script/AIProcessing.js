@@ -1112,6 +1112,46 @@ function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
   writeListingJson_(sheet,row,cols,data);
 }
 
+/**
+ * Run once manually from the Apps Script editor after deployment.
+ * Google requests MailApp permission on the first run; a successful test
+ * confirms that this authorization has actually been granted.
+ */
+function authorizeAndRetryWohnungsagentNotifications() {
+  MailApp.sendEmail({
+    to: 'ulf-marxen@gmx.de',
+    subject: 'Wohnungsagent: E-Mail-Versand erfolgreich autorisiert',
+    body: 'Testnachricht: Der automatische Benachrichtigungsversand ist freigegeben.',
+    name: 'Wohnungsagent'
+  });
+  const ss = SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_());
+  const sheet = ss.getSheetByName('Anzeigen');
+  if (!sheet) throw new Error('Anzeigen-Blatt fehlt.');
+  const cols = getListingColumns_(sheet);
+  const jsonCol = cols['Bildanalyse JSON'] + 1;
+  const values = sheet.getRange(2,jsonCol,Math.max(0,sheet.getLastRow()-1),1).getValues();
+  let resent=0, failed=0;
+  for(let i=0;i<values.length;i++) {
+    let data;
+    try { data=parseAiListingJson_(values[i][0]); }
+    catch(e) { continue; }
+    if(!data.notification_eligible || data.notification_state !== 'failed' ||
+       !/script\.send_mail|MailApp\.sendEmail|Berechtigung|authorization/i.test(String(data.notification_error||''))) continue;
+    const row=i+2;
+    const status=String(sheet.getRange(row,cols['Status']+1).getValue()||'');
+    if(status==='Ausgeschlossen' || !String(sheet.getRange(row,cols['Datensatz-ID']+1).getValue()||'')) continue;
+    delete data.notification_state;
+    delete data.notification_error;
+    notifyNewListing_(sheet,row,cols,data,data.extracted_fields||{},{
+      status:status,reason:String(sheet.getRange(row,cols['Mietprüfung']+1).getValue()||'')
+    });
+    const after=parseAiListingJson_(sheet.getRange(row,jsonCol).getValue());
+    if(after.notification_state==='sent') resent++; else failed++;
+  }
+  Logger.log('Wohnungsagent notification recovery: resent='+resent+', failed='+failed);
+  return {resent:resent,failed:failed};
+}
+
 function getListingColumns_(sheet) {
   const headers=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
   const out={}; headers.forEach((h,i)=>{if(h) out[String(h).trim()]=i;});
