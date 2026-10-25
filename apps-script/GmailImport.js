@@ -741,20 +741,32 @@ function collectMailCandidates_(existing, processed) {
   if (scanDue) {
     const start = reconcileDue || !Number.isFinite(previous) ? cutoff :
       Math.max(cutoff, previous - MAIL_IMPORT.discoveryOverlapMinutes * 60000);
-    const query = 'label:"' + MAIL_IMPORT.label.replace(/"/g, '') + '" after:' +
-      Math.floor(start / 1000);
-    const threads = GmailApp.search(query, 0, MAIL_IMPORT.maxThreads);
-    limited = threads.length >= MAIL_IMPORT.maxThreads;
-    for (const thread of threads) {
-      for (const mail of thread.getMessages()) {
-        const date = mail.getDate().getTime();
-        if (date < start || date < cutoff || date > now) continue;
-        const id = mail.getId();
-        if (seen.has(id)) continue;
-        seen.add(id);
-        if (!eligible(id, date)) continue;
-        result.push(mail);
-        discovered++;
+    const after = ' after:' + Math.floor(start / 1000);
+    // Fotocasa changed the subject to "Nuevo · Piso ..." and its Gmail
+    // filter no longer attaches Wohnungssuche/Suchaufträge. Discover these
+    // separately without admitting reminders, favorites or replies.
+    const searches = [
+      { query: 'label:"' + MAIL_IMPORT.label.replace(/"/g, '') + '"' + after, portal: '' },
+      { query: 'from:(fotocasa.es)' + after, portal: 'fotocasa' }
+    ];
+    let threadCount = 0;
+    for (const search of searches) {
+      const threads = GmailApp.search(search.query, 0, MAIL_IMPORT.maxThreads);
+      threadCount += threads.length;
+      if (threads.length >= MAIL_IMPORT.maxThreads) limited = true;
+      for (const thread of threads) {
+        for (const mail of thread.getMessages()) {
+          if (search.portal === 'fotocasa' &&
+              !/^\s*Nuevo\s*[·-]/i.test(String(mail.getSubject() || ''))) continue;
+          const date = mail.getDate().getTime();
+          if (date < start || date < cutoff || date > now) continue;
+          const id = mail.getId();
+          if (seen.has(id)) continue;
+          seen.add(id);
+          if (!eligible(id, date)) continue;
+          result.push(mail);
+          discovered++;
+        }
       }
     }
     result.sort((a, b) => a.getDate().getTime() - b.getDate().getTime());
@@ -762,7 +774,7 @@ function collectMailCandidates_(existing, processed) {
     scanComplete = !limited && result.length <= MAIL_IMPORT.maxMessagesPerRun;
     logImageDiagnostic('gmail_discovery', {
       status: scanComplete ? 'checkpoint_ready' : 'backlog_retained',
-      count: discovered, files: threads.length,
+      count: discovered, files: threadCount,
       reason: limited ? 'thread_limit' : result.length > MAIL_IMPORT.maxMessagesPerRun ? 'mail_limit' : ''
     });
   }
