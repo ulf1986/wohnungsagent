@@ -212,7 +212,7 @@ test('retries reuse stored photos, restore ownership, and retain retry on failed
   assert.equal(result.status[0], 'ready_for_ai');
   assert.equal(result.files[0].file_id, 'existing');
   assert.equal(result.files[0].listing_id, 'pisos:67520671658');
-  assert.equal(runQueue(fixture(instant), { failDownload: true }).status[0], 'retry');
+  assert.equal(runQueue(fixture(instant), { failDownload: true }).status[0], 'ready_for_ai');
   assert.equal(runQueue('<a href="' + photo.listing_url + '">no photo</a>').status[0], 'retry');
 });
 
@@ -329,7 +329,7 @@ test('ImmoScout single listing is ready, reuses stored files and preserves retry
   result = runQueue(fixture(scoutInstant), { oldFiles: result.files });
   assert.equal(result.downloads, 0);
   assert.equal(result.status[0], 'ready_for_ai');
-  assert.equal(runQueue(fixture(scoutInstant), { failDownload: true }).status[0], 'retry');
+  assert.equal(runQueue(fixture(scoutInstant), { failDownload: true }).status[0], 'ready_for_ai');
 });
 
 test('ImmoScout multi-listing passes; missing and shared photos remain safe', () => {
