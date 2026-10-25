@@ -421,8 +421,19 @@ function runGmailImagePipeline() {
         const safeOwnership = oneListing || allFiles.every(file =>
           !file.file_id || !isPropertyImageUrl(file.source_url) ||
           eligibleIds.includes(fileOwner(file)));
+        // Photo fetch errors must not hold up an identifiable listing forever.
+        // The AI stage can retrieve listing-page text and mark missing photos.
+        // Preserve ownership validation so a digest never assigns foreign photos.
         const ready = eligibleIds.length > 0 && safeOwnership &&
-          (status === 'completed' || (!oneListing && status === 'no_images'));
+          (status === 'completed' || status === 'no_images' ||
+           status === 'gallery_unavailable' || status === 'retry');
+        if (ready && status !== 'completed') {
+          logImageDiagnostic('mail_text_fallback', {
+            status: 'ready_without_complete_images', mail_id: mailId,
+            count: eligibleIds.length, files: allFiles.length,
+            reason: errors.join(' | ').slice(0, 250) || 'incomplete_images'
+          });
+        }
         if (ready) status = 'ready_for_ai';
         else if (status === 'completed' || status === 'no_images' ||
                  status === 'gallery_unavailable') status = 'retry';
