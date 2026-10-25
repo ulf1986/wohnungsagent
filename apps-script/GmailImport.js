@@ -424,9 +424,13 @@ function runGmailImagePipeline() {
         // Photo fetch errors must not hold up an identifiable listing forever.
         // The AI stage can retrieve listing-page text and mark missing photos.
         // Preserve ownership validation so a digest never assigns foreign photos.
+        const fallbackOnImageFailure = mailImageUrls.length > 0 &&
+          !ambiguousPhotos.length && errors.length > 0;
         const ready = eligibleIds.length > 0 && safeOwnership &&
-          (status === 'completed' || status === 'no_images' ||
-           status === 'gallery_unavailable' || status === 'retry');
+          !ambiguousPhotos.length &&
+          (status === 'completed' ||
+           (!oneListing && status === 'no_images') ||
+           fallbackOnImageFailure);
         if (ready && status !== 'completed') {
           logImageDiagnostic('mail_text_fallback', {
             status: 'ready_without_complete_images', mail_id: mailId,
