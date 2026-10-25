@@ -486,14 +486,14 @@ test('incremental Gmail discovery checkpoints and skips redundant scans for 15 m
   ctx.logImageDiagnostic=()=>{};
   const first=ctx.collectMailCandidates_({},new Set());
   assert.equal(first.length,1);
-  assert.equal(calls.length,1);
+  assert.equal(calls.length,2);
   assert.ok(first.scanCheckpoint);
   assert.ok(calls[0].includes('label:'));
   values.set('WOHNUNGSAGENT_GMAIL_DISCOVERY_UTC',first.scanCheckpoint);
   values.set('WOHNUNGSAGENT_GMAIL_RECONCILE_UTC',first.scanCheckpoint);
   const second=ctx.collectMailCandidates_({},new Set());
   assert.equal(second.length,0);
-  assert.equal(calls.length,1);
+  assert.equal(calls.length,2);
 });
 
 test('known retry is loaded by Gmail message ID without rescanning conversations',()=>{
@@ -518,7 +518,8 @@ test('known retry is loaded by Gmail message ID without rescanning conversations
 
 test('incomplete Gmail discovery does not publish a new cursor',()=>{
   const ctx=context(), propWrites=[], msg=i=>({
-    getId:()=> 'mail-'+i,getDate:()=>new Date(Date.now()-1000)
+    getId:()=> 'mail-'+i,getDate:()=>new Date(Date.now()-1000),
+    getSubject:()=> 'Other alert'
   });
   ctx.PropertiesService={getScriptProperties:()=>({
     getProperty:()=>null,setProperty:(k,v)=>propWrites.push([k,v])
