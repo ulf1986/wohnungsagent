@@ -346,8 +346,8 @@ function dedupParse_(json) {
  *
  * Old columns: A=Gesehen, B=Zu löschen, C=Punkte, D=E-Mail-Eingang.
  * New columns: A=Zu löschen, B=Wohnungsbewertung (0–100),
- * C=Preisbewertung (0–100), D=E-Mail-Eingang.
- * No other column needs to shift in its final position.
+ * C=Preisbewertung (0–100), D=Miete pro m², E=E-Mail-Eingang.
+ * All later columns are addressed by header, preserving their contents.
  */
 function ensureListingRatingSchema_(ss) {
   const sheet=ss.getSheetByName('Anzeigen');
@@ -377,11 +377,38 @@ function ensureListingRatingSchema_(ss) {
       sheet.getRange(2,2,end-1,2).clearContent();
     }else throw new Error('Preisbewertung: unerwartete dritte Spalte');
   }
+  heads=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  const unitPrice='Miete pro m²';
+  if(heads[3]!==unitPrice){
+    if(heads[3]!=='E-Mail-Eingang' || heads.includes(unitPrice))
+      throw new Error('Miete pro m²: unerwartete Spaltenposition');
+    sheet.insertColumnAfter(3);
+    sheet.getRange(1,4).setValue(unitPrice);
+    sheet.getRange(1,3).copyFormatToRange(sheet,4,4,1,1);
+    sheet.setColumnWidth(4,125);
+  }
   // Sanity-check the exact resulting columns before downstream processing.
-  heads=sheet.getRange(1,1,1,4).getValues()[0];
-  if(heads.join('|')!==['Zu löschen',home,price,'E-Mail-Eingang'].join('|'))
+  heads=sheet.getRange(1,1,1,5).getValues()[0];
+  if(heads.join('|')!==['Zu löschen',home,price,unitPrice,'E-Mail-Eingang'].join('|'))
     throw new Error('Bewertungsspaltenmigration nicht abgeschlossen');
+  refreshListingRentPerSquareMeter_(sheet);
   return {ready:true};
+}
+
+/** Keep existing entries in sync, also after manual rent/area corrections. */
+function refreshListingRentPerSquareMeter_(sheet) {
+  const last=sheet.getLastRow();
+  if(last<2)return;
+  const heads=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  const target=heads.indexOf('Miete pro m²'),rent=heads.indexOf('Miete'),area=heads.indexOf('Fläche'),id=heads.indexOf('Datensatz-ID');
+  if([target,rent,area,id].some(i=>i<0))throw new Error('Miete pro m²: Pflichtspalten fehlen');
+  sheet.getRange(2,target+1,last-1,1).setNumberFormat('0.00" €/m²"');
+  const rows=sheet.getRange(2,1,last-1,sheet.getLastColumn()).getValues();
+  rows.forEach((values,i)=>{
+    if(!values[id])return;
+    const value=listingRentPerSquareMeter_(values[rent],values[area]);
+    if(values[target]!==value)sheet.getRange(i+2,target+1).setValue(value);
+  });
 }
 
 /**
@@ -437,3 +464,4 @@ function recalculateExistingListingScores_(ss,maxRows) {
   }
   return {rescored};
 }
+

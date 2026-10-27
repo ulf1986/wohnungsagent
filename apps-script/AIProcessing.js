@@ -1040,9 +1040,24 @@ function mergeMissingOnly_(first, second) {
 function applyListingFields_(sheet,row,cols,fields,source) {
   const map={ title:'Titel', rent_eur:'Miete', area_m2:'Fläche', rental_type:'Mietart / Laufzeit' };
   for (const [key,header] of Object.entries(map)) if (fields[key]!==null && fields[key]!==undefined) setListingValue_(sheet,row,cols,header,fields[key]);
+  updateListingRentPerSquareMeter_(sheet,row,cols);
   const eligibility = assessListingEligibility_(fields, null);
   setListingValue_(sheet,row,cols,'Status',eligibility.status);
   setListingValue_(sheet,row,cols,'Mietprüfung',eligibility.reason);
+}
+
+/** Monthly advertised rent per m²; keep full precision, round only the display. */
+function listingRentPerSquareMeter_(rent,area) {
+  if(!['number','string'].includes(typeof rent) || !['number','string'].includes(typeof area))return '';
+  const monthly=Number(rent),squareMeters=Number(area),value=monthly/squareMeters;
+  return Number.isFinite(monthly) && monthly>0 && Number.isFinite(squareMeters) && squareMeters>0 && Number.isFinite(value) ? value : '';
+}
+function updateListingRentPerSquareMeter_(sheet,row,cols) {
+  if(cols['Miete pro m²']===undefined)return;
+  const value=listingRentPerSquareMeter_(sheet.getRange(row,cols['Miete']+1).getValue(),
+    sheet.getRange(row,cols['Fläche']+1).getValue());
+  const cell=sheet.getRange(row,cols['Miete pro m²']+1);
+  cell.setValue(value);cell.setNumberFormat('0.00" €/m²"');
 }
 function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   if (isListingBlacklisted_(SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_()),id)) throw new Error('Datensatz-ID steht in der Sperrliste.');

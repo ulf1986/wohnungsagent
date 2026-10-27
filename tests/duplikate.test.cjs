@@ -6,11 +6,12 @@ class Sheet {
   getLastRow(){return this.rows.length;}
   getLastColumn(){return this.width;}
   setFrozenRows(){}
+  setColumnWidth(){}
   getRange(r,c,n=1,m=1){
     const get=()=>Array.from({length:n},(_,i)=>Array.from({length:m},(_,j)=>this.rows[r+i-1]?.[c+j-1]??''));
     const set=arr=>{arr.forEach((row,i)=>{this.rows[r+i-1]||=[];row.forEach((v,j)=>this.rows[r+i-1][c+j-1]=v);});};
     return {getValues:get,getValue:()=>get()[0][0],setValues:set,setValue:v=>set([[v]]),
-      clearContent:()=>set(Array.from({length:n},()=>Array(m).fill(''))),copyFormatToRange:()=>{} };
+      clearContent:()=>set(Array.from({length:n},()=>Array(m).fill(''))),copyFormatToRange:()=>{},setNumberFormat:()=>{} };
   }
   deleteRow(row){this.deleted.push(row);this.rows.splice(row-1,1);}
   deleteColumn(column){this.rows.forEach(r=>r.splice(column-1,1));this.width--;}
@@ -116,13 +117,31 @@ test('schema migration removes Gesehen, keeps delete flag, inserts price score a
   assert.equal(sheet.rows[0][0],'Zu löschen');
   assert.equal(sheet.rows[0][1],'Wohnungsbewertung (0–100)');
   assert.equal(sheet.rows[0][2],'Preisbewertung (0–100)');
-  assert.equal(sheet.rows[0][3],'E-Mail-Eingang');
+  assert.equal(sheet.rows[0][3],'Miete pro m²');
+  assert.equal(sheet.rows[0][4],'E-Mail-Eingang');
   assert.equal(sheet.rows[1][0],false);
   assert.equal(sheet.rows[1][1],'');
   assert.equal(sheet.rows[1][2],'');
   assert.equal(sheet.rows[1][sheet.rows[0].indexOf('Datensatz-ID')],originalId);
   assert.equal(ctx.ensureListingRatingSchema_(ss).ready,true);
   assert.equal(sheet.rows[0].filter(x=>x==='Preisbewertung (0–100)').length,1);
+  assert.equal(sheet.rows[0].filter(x=>x==='Miete pro m²').length,1);
+});
+
+test('unit rent column is inserted beside price rating, backfilled and refreshed without moving values incorrectly',()=>{
+  const {ctx,ss,sheet}=setup([listing('idealista:77',[],{rent:1234,area:73})]);
+  sheet.rows[1][header.indexOf('E-Mail-Eingang')]='27.10.2026 11:33';
+  const before=sheet.rows[1].slice(),width=sheet.width;
+  ctx.ensureListingRatingSchema_(ss);
+  assert.equal(sheet.width,width+1);assert.equal(sheet.rows[0][3],'Miete pro m²');
+  assert.equal(sheet.rows[1][3],1234/73);
+  for(let i=0;i<before.length;i++)assert.equal(sheet.rows[1][i<3?i:i+1],before[i]);
+  ctx.ensureListingRatingSchema_(ss);assert.equal(sheet.width,width+1);
+  const rent=sheet.rows[0].indexOf('Miete'),area=sheet.rows[0].indexOf('Fläche');
+  sheet.rows[1][rent]=1500;sheet.rows[1][area]=100;
+  ctx.ensureListingRatingSchema_(ss);assert.equal(sheet.rows[1][3],15);
+  sheet.rows[1][area]=0;
+  ctx.ensureListingRatingSchema_(ss);assert.equal(sheet.rows[1][3],'');
 });
 test('existing listings re-score from cached AI findings without model calls',()=>{
   const {ctx,ss,sheet}=setup([listing('idealista:77',['first-a','second-a'])]);
@@ -134,3 +153,4 @@ test('existing listings re-score from cached AI findings without model calls',()
   assert.ok(values[h.indexOf('Preisbewertung (0–100)')]>=0);
   assert.equal(ctx.recalculateExistingListingScores_(ss,5).rescored,0);
 });
+

@@ -12,6 +12,26 @@ vm.runInNewContext(
 );
 const call = (expression) => vm.runInContext(expression, context);
 
+test('monthly rent per square metre retains full precision and rejects missing or invalid inputs',()=>{
+  assert.equal(context.listingRentPerSquareMeter_(1200,80),15);
+  assert.equal(context.listingRentPerSquareMeter_(1234,73),1234/73);
+  assert.equal(context.listingRentPerSquareMeter_('1200','80'),15);
+  for(const invalid of ['',null,undefined,0,-1,Infinity,NaN,true,'Unbekannt']){
+    assert.equal(context.listingRentPerSquareMeter_(1200,invalid),'');
+    assert.equal(context.listingRentPerSquareMeter_(invalid,80),'');
+  }
+});
+
+test('updated listing facts immediately refresh the separate numeric unit rent column',()=>{
+  const headers=['Miete','Fläche','Miete pro m²','Titel','Status','Mietprüfung'],values=[1200,80,'','','',''],formats={};
+  const sheet={getRange:(_,c)=>({getValue:()=>values[c-1],setValue:v=>{values[c-1]=v;},setNumberFormat:f=>{formats[c-1]=f;}})};
+  const cols=Object.fromEntries(headers.map((h,i)=>[h,i]));
+  context.applyListingFields_(sheet,2,cols,{rent_eur:1500,area_m2:100},'email');
+  assert.equal(values[2],15);assert.equal(formats[2],'0.00" €/m²"');
+  context.applyListingFields_(sheet,2,cols,{area_m2:0},'listing_page');
+  assert.equal(values[2],'');
+});
+
 test('Málaga reference: price ratings are independent 0–100 integers',()=>{
   const values=[[5,100],[8,94],[10,86],[12,76],[14,64],[16.5,50],[18,43],[20,34],[22,26],[25,17],[30,9],[40,0]];
   values.forEach(([price,rating])=>{
@@ -69,3 +89,4 @@ test('multi-listing image selection excludes unassigned and other-listing files'
   assert.deepEqual(Array.from(call(`filterListingDriveFiles_(${JSON.stringify(files)}, 'idealista:1', false)`).map(file => file.file_id)), ['a','c','e']);
   assert.deepEqual(Array.from(call(`filterListingDriveFiles_(${JSON.stringify(files)}, 'idealista:1', true)`).map(file => file.file_id)), ['a','c','d','e']);
 });
+
