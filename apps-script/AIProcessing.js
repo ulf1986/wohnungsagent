@@ -766,6 +766,7 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   const coverage = score.coverage;
   setListingValue_(sheet,row,cols,'Wohnungsbewertung (0–100)',score.homeScore === null ? '' : score.homeScore);
   setListingValue_(sheet,row,cols,'Preisbewertung (0–100)',score.priceScore === null ? '' : score.priceScore);
+  syncListingUnitPriceColors_(sheet);
   setListingValue_(sheet,row,cols,'Bewertungsabdeckung (%)',coverage);
   // Location remains descriptive only; it has no influence on points.
   setListingValue_(sheet,row,cols,'Entfernung zu 29001 km',finiteNumber_(merged.distance_km_approx));
@@ -913,6 +914,7 @@ function reclassifyExistingListings() {
       setListingValue_(sheet,row,cols,'Preisbewertung (0–100)',score===null?'':score);
       updated++;
     }
+    syncListingUnitPriceColors_(sheet);
     return {status:'ok',updated,skipped};
   }finally{lock.releaseLock();}
 }
@@ -1058,6 +1060,32 @@ function updateListingRentPerSquareMeter_(sheet,row,cols) {
     sheet.getRange(row,cols['Fläche']+1).getValue());
   const cell=sheet.getRange(row,cols['Miete pro m²']+1);
   cell.setValue(value);cell.setNumberFormat('0.00" €/m²"');
+}
+
+/** €/m² mirrors the price rating's displayed color, never its 0–100 scale. */
+function syncListingUnitPriceColors_(sheet) {
+  const heads=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+  const source=heads.indexOf('Preisbewertung (0–100)')+1,target=heads.indexOf('Miete pro m²')+1;
+  if(!source || !target || sheet.getLastRow()<2)return;
+  let changed=false;
+  const rules=[];
+  for(const rule of sheet.getConditionalFormatRules()){
+    if(!rule.getGradientCondition()){rules.push(rule);continue;}
+    const ranges=[];let trimmed=false;
+    for(const range of rule.getRanges()){
+      const first=range.getColumn(),last=first+range.getNumColumns()-1;
+      if(target<first || target>last){ranges.push(range);continue;}
+      trimmed=true;
+      if(first<target)ranges.push(sheet.getRange(range.getRow(),first,range.getNumRows(),target-first));
+      if(last>target)ranges.push(sheet.getRange(range.getRow(),target+1,range.getNumRows(),last-target));
+    }
+    if(!trimmed)rules.push(rule);
+    else {changed=true;if(ranges.length)rules.push(rule.copy().setRanges(ranges).build());}
+  }
+  if(changed)sheet.setConditionalFormatRules(rules);
+  SpreadsheetApp.flush();
+  const count=sheet.getLastRow()-1;
+  sheet.getRange(2,target,count,1).setBackgrounds(sheet.getRange(2,source,count,1).getBackgrounds());
 }
 function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   if (isListingBlacklisted_(SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_()),id)) throw new Error('Datensatz-ID steht in der Sperrliste.');

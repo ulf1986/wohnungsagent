@@ -7,11 +7,13 @@ class Sheet {
   getLastColumn(){return this.width;}
   setFrozenRows(){}
   setColumnWidth(){}
+  getConditionalFormatRules(){return [];}
   getRange(r,c,n=1,m=1){
     const get=()=>Array.from({length:n},(_,i)=>Array.from({length:m},(_,j)=>this.rows[r+i-1]?.[c+j-1]??''));
     const set=arr=>{arr.forEach((row,i)=>{this.rows[r+i-1]||=[];row.forEach((v,j)=>this.rows[r+i-1][c+j-1]=v);});};
     return {getValues:get,getValue:()=>get()[0][0],setValues:set,setValue:v=>set([[v]]),
-      clearContent:()=>set(Array.from({length:n},()=>Array(m).fill(''))),copyFormatToRange:()=>{},setNumberFormat:()=>{} };
+      clearContent:()=>set(Array.from({length:n},()=>Array(m).fill(''))),copyFormatToRange:()=>{},setNumberFormat:()=>{},
+      getBackgrounds:()=>Array.from({length:n},()=>Array(m).fill('#ffffff')),setBackgrounds:()=>{} };
   }
   deleteRow(row){this.deleted.push(row);this.rows.splice(row-1,1);}
   deleteColumn(column){this.rows.forEach(r=>r.splice(column-1,1));this.width--;}

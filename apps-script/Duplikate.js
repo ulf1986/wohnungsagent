@@ -409,6 +409,7 @@ function refreshListingRentPerSquareMeter_(sheet) {
     const value=listingRentPerSquareMeter_(values[rent],values[area]);
     if(values[target]!==value)sheet.getRange(i+2,target+1).setValue(value);
   });
+  syncListingUnitPriceColors_(sheet);
 }
 
 /**
@@ -462,6 +463,7 @@ function recalculateExistingListingScores_(ss,maxRows) {
     sheet.getRange(row,ci('Bildanalyse JSON')+1).setValue(JSON.stringify(data));
     rescored++;
   }
+  if(rescored)syncListingUnitPriceColors_(sheet);
   return {rescored};
 }
 

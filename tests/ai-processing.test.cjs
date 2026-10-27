@@ -22,6 +22,21 @@ test('monthly rent per square metre retains full precision and rejects missing o
   }
 });
 
+test('unit price mirrors price colors while preserving other gradient ranges and cell values',()=>{
+  const range=(col,width)=>({getColumn:()=>col,getNumColumns:()=>width,getRow:()=>2,getNumRows:()=>5,col,width});
+  const sourceRule={getGradientCondition:()=>({}),getRanges:()=>[range(2,3),range(11,1)],
+    copy:()=>({setRanges(ranges){this.ranges=ranges;return this;},build(){return this;}})};
+  const other={getGradientCondition:()=>null};let rules,colors;
+  const sheet={getLastColumn:()=>11,getLastRow:()=>6,getConditionalFormatRules:()=>[sourceRule,other],
+    setConditionalFormatRules:r=>{rules=r;},getRange:(row,col,n=1,m=1)=>row===1?
+      {getValues:()=>[['Zu löschen','Wohnungsbewertung (0–100)','Preisbewertung (0–100)','Miete pro m²']]}:
+      {...range(col,m),getBackgrounds:()=>[['#ff0000'],['#ffff00'],['#00ff00'],['#ffffff'],['#112233']],setBackgrounds:c=>{colors=c;}}};
+  context.SpreadsheetApp={flush(){}};
+  context.syncListingUnitPriceColors_(sheet);
+  assert.deepEqual(JSON.parse(JSON.stringify(rules[0].ranges.map(r=>[r.col,r.width]))),[[2,2],[11,1]]);
+  assert.equal(rules[1],other);assert.deepEqual(colors,[['#ff0000'],['#ffff00'],['#00ff00'],['#ffffff'],['#112233']]);
+});
+
 test('updated listing facts immediately refresh the separate numeric unit rent column',()=>{
   const headers=['Miete','Fläche','Miete pro m²','Titel','Status','Mietprüfung'],values=[1200,80,'','','',''],formats={};
   const sheet={getRange:(_,c)=>({getValue:()=>values[c-1],setValue:v=>{values[c-1]=v;},setNumberFormat:f=>{formats[c-1]=f;}})};
