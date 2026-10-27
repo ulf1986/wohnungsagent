@@ -88,6 +88,60 @@ test('blacklist prevents row creation and all AI calls',()=>{
   assert.deepEqual(x.calls,[]);
 });
 
+test('new listing notifies GMX as soon as its row is saved, before text or image AI',()=>{
+  const x=setup(), mails=[];
+  x.ctx.MailApp={sendEmail:mail=>{
+    assert.equal(x.value(x.listing,'Datensatz-ID'),'idealista:123');
+    assert.equal(JSON.parse(x.value(x.listing,'Bildanalyse JSON')).notification_state,'attempted');
+    assert.ok(!x.calls.includes('email'));assert.ok(!x.calls.includes('images'));
+    mails.push(mail);
+  }};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  assert.equal(mails.length,1);assert.equal(mails[0].to,'ulf-marxen@gmx.de');
+  assert.match(mails[0].body,/Auswertung folgt/);assert.match(mails[0].body,/https:\/\/www.idealista.com\/inmueble\/123\//);
+  assert.ok(!mails[0].body.includes('Wohnungsbewertung:'));
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  x.setQueue('KI Verarbeitungsstatus','pending');x.setQueue('KI Abgeschlossene Anzeigen JSON','[]');
+  x.ctx.processNextAiListing(x.ss);
+  assert.equal(mails.length,1);
+});
+
+test('new-entry notification is sent even when subsequent extraction fails, without duplicates on retry',()=>{
+  const x=setup(),mails=[];x.ctx.MailApp={sendEmail:mail=>mails.push(mail)};
+  x.ctx.callListingExtraction_=()=>{throw Error('429');};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'needs_review');assert.equal(mails.length,1);
+  x.setQueue('KI Verarbeitungsstatus','pending');x.setQueue('KI Wiederholung ab UTC','');x.ctx.processNextAiListing(x.ss);
+  assert.equal(mails.length,1);assert.equal(JSON.parse(x.value(x.listing,'Bildanalyse JSON')).notification_state,'sent');
+});
+
+test('mail failure is recorded once and does not stop extraction or image processing',()=>{
+  const x=setup();let attempts=0;
+  x.ctx.MailApp={sendEmail:()=>{attempts++;throw Error('Missing script.send_mail permission');}};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  assert.equal(attempts,1);assert.equal(data.notification_state,'failed');
+  assert.match(data.notification_error,/permission/);assert.deepEqual(x.calls,['page','email','images']);
+});
+
+test('blacklisted, duplicate and confirmed unavailable listings do not send new-entry notifications',()=>{
+  for(const mode of ['blacklist','duplicate','unavailable']){
+    const x=setup({blocked:mode==='blacklist'});let sent=0;x.ctx.MailApp={sendEmail:()=>sent++};
+    if(mode==='duplicate')x.ctx.checkDuplicateBeforeAi_=()=>({status:'duplicate',canonical:'fotocasa:999'});
+    if(mode==='unavailable')x.ctx.fetchListingPageForProvider_=()=>({status:'unavailable',httpStatus:410,error:'HTTP 410'});
+    x.ctx.processNextAiListing(x.ss);assert.equal(sent,0);
+  }
+});
+
+test('existing pre-deploy rows are not retrospectively notified on completion',()=>{
+  const x=setup();x.ctx.processNextAiListing(x.ss);
+  const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  delete data.notification_state;delete data.notification_phase;
+  x.listing.rows[1][headers.indexOf('Bildanalyse JSON')]=JSON.stringify(data);
+  let sent=0;x.ctx.MailApp={sendEmail:()=>sent++};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');assert.equal(sent,0);
+});
+
 test('new listing fetches page before one combined extraction and proceeds directly to images',()=>{
   const x=setup();let textCalls=0;
   x.ctx.fetchListingPageForProvider_=()=>({status:'ok',httpStatus:200,text:'Seitenangaben'});
@@ -184,11 +238,11 @@ test('API error persists retry and repetition reuses existing row',()=>{
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'retry');
   assert.equal(x.listing.rows.filter(r=>r[headers.indexOf('Datensatz-ID')]==='idealista:123').length,1);
 });
-test('missing key and conflicting target are explicit failures before importing',()=>{
+test('missing AI key still permits the new-entry alert; conflicting target is rejected',()=>{
   const x=setup();x.props.delete('OPENAI_API_KEY');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'retry');
   assert.match(x.value(x.queue,'KI Fehler'),/OPENAI_API_KEY/);
-  assert.equal(x.value(x.listing,'Datensatz-ID'),undefined);
+  assert.equal(x.value(x.listing,'Datensatz-ID'),'idealista:123');
   x.props.set('WOHNUNGSAGENT_SPREADSHEET_ID','old-sheet');
   assert.throws(()=>x.ctx.processNextAiListing(x.ss),/weicht von CONFIG/);
 });
@@ -389,3 +443,4 @@ test('orphaned processing state is recovered under the exclusive lock using save
   assert.ok(x.value(x.queue,'KI Lauf-ID'));
   assert.ok(x.value(x.queue,'KI Ergebnis gespeichert UTC'));
 });
+

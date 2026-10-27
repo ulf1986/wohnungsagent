@@ -80,6 +80,34 @@ unbekannte Angaben reduzieren die Abdeckung. Dies ist eine Auswertung der eigene
 Suchkriterien. Kein portalübergreifender semantischer/visueller Dublettennachweis;
 gleiche Wohnungen mit verschiedenen Portal-IDs benötigen weiterhin einen Abgleich.
 
+## Sofortige Benachrichtigung bei neuen Anzeigen
+
+Neue Anzeigen lösen direkt nach dem Speichern ihrer Tabellenzeile eine E-Mail
+an **ulf-marxen@gmx.de** aus. Der Versand erfolgt vor dem ersten KI-Aufruf und
+wartet weder auf die Text- noch auf die Bildauswertung. Die Mail enthält den
+ursprünglichen E-Mail-Betreff, Portal, Eingangszeit, Inseratslink und Datensatz-ID
+sowie den Hinweis **„Auswertung folgt“**. Unbekannte Bewertungen werden nicht als
+fertige Ergebnisse ausgegeben. Eine fehlende OpenAI-Konfiguration verhindert
+diese Benachrichtigung nicht; die anschließende Auswertung meldet ihren Fehler.
+
+Die bereits vorhandenen Sperrlisten-, Dubletten- und technischen
+Verfügbarkeitsprüfungen vor der Aufnahme bleiben erhalten. Eine erst später
+erkannte Nichteignung kann daher nach der Sofortbenachrichtigung festgestellt
+werden. Die Mail weist ausdrücklich auf die noch ausstehende Prüfung hin.
+
+Das Ende der KI-Auswertung verschickt keine zweite Mail. Vor dem Senden wird
+`notification_state=attempted` gespeichert; danach `sent` oder `failed`.
+Wiederholungen und andere Mails zur gleichen bestehenden Anzeige führen damit
+nicht erneut zum Versand. Bestandszeilen werden nicht nachträglich gemeldet.
+Versandfehler stoppen die KI-Pipeline nicht. Die vorhandene manuelle Funktion
+`authorizeAndRetryWohnungsagentNotifications()` kann Berechtigungsfehler gezielt
+nachholen; sie sendet bei jedem manuellen Aufruf zunächst eine Testmail.
+
+Der Versand beginnt beim Anlegen der Zeile im bestehenden Importablauf, nicht
+bereits beim Gmail-Eingang. Wartezeiten durch Triggerintervall, Queue und
+vorgelagerte Prüfungen bleiben möglich. Es wird kein zusätzlicher Trigger
+angelegt. Die Änderung muss manuell deployt werden.
+
 ## Prüfung und nächster Schritt
 
 Lokale Tests prüfen die vollständige Folge bis zur Anzeigenzeile und Bildbewertung
@@ -102,3 +130,4 @@ umgestaltet. Insbesondere wird kein massenhafter Neuimport oder Löschen ausgel�
 API-Referenz: [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
 Anfragen nutzen text.format mit JSON Schema, echte Bilddaten und store:false;
 unvollständige Antworten werden nicht als erfolgreiche Bewertung behandelt.
+

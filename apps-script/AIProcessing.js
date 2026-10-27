@@ -182,7 +182,6 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       return { status: duplicateCheck.status, listingId,
         canonicalListingId: duplicateCheck.canonical };
     }
-    const config = getOpenAiConfig_();
     const existingRow = findListingRow_(sheet, cols, listingId, listingUrl);
     let preflightPage;
     if (!existingRow) {
@@ -217,6 +216,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,data.ai_pipeline.page_check.reason);
       return {status:'unavailable',listingId};
     }
+    const config = getOpenAiConfig_();
 
     if (!data.ai_pipeline.email_fields) {
       // Seite vor der gemeinsamen Extraktion abrufen; Ausfall blockiert die Mail nicht.
@@ -803,7 +803,6 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   data.ai_analysis_status = 'completed';
   if (data.image_review) data.image_review.provisional = false;
   writeListingJson_(sheet,row,cols,data);
-  notifyNewListing_(sheet,row,cols,data,merged,eligibility);
 }
 
 /**
@@ -1065,11 +1064,16 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   assign('Eingang (UTC)',q[qi['Queue Eingang UTC']]||new Date().toISOString());
   assign('E-Mail-ID',mailId); assign('Gmail-Link','https://mail.google.com/mail/u/0/#all/'+mailId);
   assign('KI-Bewertung','In Bearbeitung'); assign('Status','Vorläufig');
-  assign('Bildanalyse JSON',JSON.stringify({ai_analysis_status:'pending',source_email_id:mailId,drive_files:listingFiles||[],analyzed_file_ids:[],notification_eligible:true}));
+  const data={ai_analysis_status:'pending',source_email_id:mailId,drive_files:listingFiles||[],
+    analyzed_file_ids:[],notification_eligible:true,notification_phase:'new_entry'};
+  assign('Bildanalyse JSON',JSON.stringify(data));
   sheet.getRange(row,1,1,values.length).setValues([values]);
+  SpreadsheetApp.flush();
+  notifyNewListing_(sheet,row,cols,data,{},
+    {status:'Vorläufig',reason:'Neue Anzeige; KI-Auswertung folgt.'});
   return row;
 }
-/** One notification per newly created, non-excluded listing, after extraction is saved.
+/** One notification immediately after saving a newly created listing, before AI.
  * Old rows are deliberately not backfilled. Failed sends are logged but never
  * allowed to block the AI pipeline or cause repeated sends on every retry.
  */
@@ -1083,7 +1087,18 @@ function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
   data.notification_state='attempted';
   data.notification_attempted_at=new Date().toISOString();
   writeListingJson_(sheet,row,cols,data);
-  const text=[
+  const text=(data.notification_phase === 'new_entry' ? [
+    'Neue Wohnungsanzeige – Auswertung folgt',
+    '',
+    'E-Mail-Betreff: '+title,
+    'Portal: '+get('Portal'),
+    'Eingang (UTC): '+get('Eingang (UTC)'),
+    '',
+    'Inserat: '+url,
+    'Datensatz: '+id,
+    '',
+    'Die Anzeige wurde neu in die Tabelle aufgenommen. KI-Auswertung und Eignungsprüfung folgen; die Angaben sind noch ungeprüft.'
+  ] : [
     'Neue Wohnungsanzeige in Málaga',
     '',
     'Titel: '+title,
@@ -1098,7 +1113,7 @@ function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
     '',
     'Inserat: '+url,
     'Datensatz: '+id
-  ].join('\n');
+  ]).join('\n');
   try {
     MailApp.sendEmail({to:recipient,subject:'Wohnungsagent: '+title,body:text,name:'Wohnungsagent'});
     data.notification_state='sent';
@@ -1337,3 +1352,4 @@ function listingPageIdentityIds_(html) {
   }
   return [...new Set(ids)];
 }
+
