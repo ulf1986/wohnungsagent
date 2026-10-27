@@ -8,6 +8,7 @@ class Sheet {
   setFrozenRows(){}
   setColumnWidth(){}
   getConditionalFormatRules(){return [];}
+  setConditionalFormatRules(){}
   getRange(r,c,n=1,m=1){
     const get=()=>Array.from({length:n},(_,i)=>Array.from({length:m},(_,j)=>this.rows[r+i-1]?.[c+j-1]??''));
     const set=arr=>{arr.forEach((row,i)=>{this.rows[r+i-1]||=[];row.forEach((v,j)=>this.rows[r+i-1][c+j-1]=v);});};
@@ -50,7 +51,9 @@ function setup(listings=[]){
     return {width:w,height:h,data:pix};
   }
   const ctx=vm.createContext({
-    console,Uint8Array,SpreadsheetApp:{flush(){}},
+    console,Uint8Array,SpreadsheetApp:{flush(){},InterpolationType:{NUMBER:'NUMBER'},newConditionalFormatRule:()=>({
+      setGradientMinpointWithValue(){return this;},setGradientMidpointWithValue(){return this;},
+      setGradientMaxpointWithValue(){return this;},setRanges(){return this;},build(){return this;}})},
     readMailImageBlacklist:()=>new Set(block.rows.slice(1).map(r=>String(r[0]).toLowerCase())),
     logImageDiagnostic(){},
     DriveApp:{getFileById:id=>({getBlob:()=>({

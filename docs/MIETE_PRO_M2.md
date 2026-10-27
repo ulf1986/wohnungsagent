@@ -24,6 +24,13 @@ Bereiche bleiben erhalten. Die Farbe wird bei Pipeline-Läufen und neuen
 Bewertungen synchronisiert. Der numerische Quadratmeterpreis und sein Format
 werden dabei nicht verändert.
 
+Wohnungs- und Preisbewertung verwenden dieselbe Farbskala: bis 35 Punkte ein
+weicher Rotton (`#f47f57`, Referenz: bisherige 40-Punkte-Farbe),
+bei 50 Punkten gelb (`#ffd966`), ab 75 Punkten grün (`#93c47d`). Dazwischen
+verläuft die Farbe kontinuierlich. 20 €/m² entsprechen nach der unveränderten
+Preisbewertung etwa 34 Punkten und werden deshalb im gewählten Rotton angezeigt.
+Andere Farbregeln außerhalb dieser Bewertungsspalten bleiben unverändert.
+
 Die Spalte darf erst mit dem passenden Code eingefügt werden: Die vorherige
 Schema-Prüfung erwartet an vierter Position noch das Eingangsdatum. Es werden
 keine Trigger geändert, keine E-Mails nachgesendet und keine KI-Aufrufe für die

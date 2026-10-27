@@ -1066,21 +1066,41 @@ function updateListingRentPerSquareMeter_(sheet,row,cols) {
 function syncListingUnitPriceColors_(sheet) {
   const heads=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
   const source=heads.indexOf('Preisbewertung (0–100)')+1,target=heads.indexOf('Miete pro m²')+1;
-  if(!source || !target || sheet.getLastRow()<2)return;
-  let changed=false;
+  const home=heads.indexOf('Wohnungsbewertung (0–100)')+1;
+  if(!home || !source || !target || sheet.getLastRow()<2)return;
+  let changed=false,priceScaleFound=false;
   const rules=[];
   for(const rule of sheet.getConditionalFormatRules()){
-    if(!rule.getGradientCondition()){rules.push(rule);continue;}
+    const gradient=rule.getGradientCondition();
+    if(!gradient){rules.push(rule);continue;}
+    const originalRanges=rule.getRanges();
+    const points=[['Min','35','#f47f57'],['Mid','50','#ffd966'],['Max','75','#93c47d']];
+    const managed=originalRanges.length===1 && originalRanges[0].getColumn()===home && originalRanges[0].getNumColumns()===source-home+1 &&
+      originalRanges[0].getRow()===2 && originalRanges[0].getNumRows()>=sheet.getLastRow()-1 && points.every(([name,value,color])=>
+        gradient['get'+name+'Value']()===value && gradient['get'+name+'Type']()===SpreadsheetApp.InterpolationType.NUMBER &&
+        gradient['get'+name+'ColorObject']()?.asRgbColor().asHexString().toLowerCase()===color);
+    if(managed && !priceScaleFound){rules.push(rule);priceScaleFound=true;continue;}
     const ranges=[];let trimmed=false;
-    for(const range of rule.getRanges()){
+    for(const range of originalRanges){
       const first=range.getColumn(),last=first+range.getNumColumns()-1;
-      if(target<first || target>last){ranges.push(range);continue;}
-      trimmed=true;
-      if(first<target)ranges.push(sheet.getRange(range.getRow(),first,range.getNumRows(),target-first));
-      if(last>target)ranges.push(sheet.getRange(range.getRow(),target+1,range.getNumRows(),last-target));
+      if([home,source,target].every(col=>col<first || col>last)){ranges.push(range);continue;}
+      trimmed=true;let start=first;
+      for(let col=first;col<=last+1;col++){
+        if(![home,source,target].includes(col) && col<=last)continue;
+        if(start<col)ranges.push(sheet.getRange(range.getRow(),start,range.getNumRows(),col-start));
+        start=col+1;
+      }
     }
     if(!trimmed)rules.push(rule);
     else {changed=true;if(ranges.length)rules.push(rule.copy().setRanges(ranges).build());}
+  }
+  if(!priceScaleFound){
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .setGradientMinpointWithValue('#f47f57',SpreadsheetApp.InterpolationType.NUMBER,'35')
+      .setGradientMidpointWithValue('#ffd966',SpreadsheetApp.InterpolationType.NUMBER,'50')
+      .setGradientMaxpointWithValue('#93c47d',SpreadsheetApp.InterpolationType.NUMBER,'75')
+      .setRanges([sheet.getRange(2,home,sheet.getLastRow()-1,source-home+1)]).build());
+    changed=true;
   }
   if(changed)sheet.setConditionalFormatRules(rules);
   SpreadsheetApp.flush();

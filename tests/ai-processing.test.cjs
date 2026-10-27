@@ -31,9 +31,16 @@ test('unit price mirrors price colors while preserving other gradient ranges and
     setConditionalFormatRules:r=>{rules=r;},getRange:(row,col,n=1,m=1)=>row===1?
       {getValues:()=>[['Zu löschen','Wohnungsbewertung (0–100)','Preisbewertung (0–100)','Miete pro m²']]}:
       {...range(col,m),getBackgrounds:()=>[['#ff0000'],['#ffff00'],['#00ff00'],['#ffffff'],['#112233']],setBackgrounds:c=>{colors=c;}}};
-  context.SpreadsheetApp={flush(){}};
+  context.SpreadsheetApp={flush(){},InterpolationType:{NUMBER:'NUMBER'},newConditionalFormatRule:()=>({
+    setGradientMinpointWithValue(color,type,value){this.min={color,type,value};return this;},
+    setGradientMidpointWithValue(color,type,value){this.mid={color,type,value};return this;},
+    setGradientMaxpointWithValue(color,type,value){this.max={color,type,value};return this;},
+    setRanges(ranges){this.ranges=ranges;return this;},build(){return this;}})};
   context.syncListingUnitPriceColors_(sheet);
-  assert.deepEqual(JSON.parse(JSON.stringify(rules[0].ranges.map(r=>[r.col,r.width]))),[[2,2],[11,1]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(rules[0].ranges.map(r=>[r.col,r.width]))),[[11,1]]);
+  assert.equal(rules[2].ranges[0].col,2);assert.equal(rules[2].ranges[0].width,2);
+  assert.equal(rules[2].min.color,'#f47f57');assert.equal(rules[2].min.value,'35');
+  assert.equal(rules[2].mid.value,'50');assert.equal(rules[2].max.value,'75');
   assert.equal(rules[1],other);assert.deepEqual(colors,[['#ff0000'],['#ffff00'],['#00ff00'],['#ffffff'],['#112233']]);
 });
 
