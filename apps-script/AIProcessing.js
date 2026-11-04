@@ -1216,7 +1216,38 @@ function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
     'Datensatz: '+id
   ]).join('\n');
   try {
-    MailApp.sendEmail({to:recipient,subject:'Wohnungsagent: '+title,body:text,name:'Wohnungsagent'});
+    // Reuse an existing Drive photo. Never issue an additional HTTP request.
+    const htmlEscape=value=>String(value||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    const details=[
+      ['Portal',get('Portal')],['Miete',get('Miete')?get('Miete')+' €':'Noch offen'],
+      ['Fläche',get('Fläche')?get('Fläche')+' m²':'Noch offen'],
+      ['Miete pro m²',get('Miete pro m²')?get('Miete pro m²')+' €/m²':'Noch offen'],
+      ['Wohnungsbewertung',get('Wohnungsbewertung (0–100)')||'Noch offen'],
+      ['Preisbewertung',get('Preisbewertung (0–100)')||'Noch offen'],
+      ['Status',get('Status')||'Vorläufig']
+    ];
+    const safeUrl=/^https:\/\//i.test(url)?url:'';
+    const lines=details.map(([key,value])=>'<tr><td style="padding:5px 12px 5px 0"><b>'+htmlEscape(key)+
+      '</b></td><td>'+htmlEscape(value)+'</td></tr>').join('');
+    let html='<div style="font-family:Arial,sans-serif;max-width:620px">'+
+      '<h2>Neue Wohnungsanzeige</h2><p>'+htmlEscape(title)+'</p>'+
+      '<table>'+lines+'</table><p>Die KI-Auswertung kann noch ausstehen.</p>'+
+      (safeUrl?'<p><a href="'+htmlEscape(safeUrl)+'">Inserat öffnen</a></p>':'');
+    const options={to:recipient,subject:'Wohnungsagent: '+title,body:text,name:'Wohnungsagent'};
+    for(const photo of (data.drive_files||[])){
+      if(!photo.file_id)continue;
+      try {
+        const blob=DriveApp.getFileById(photo.file_id).getBlob();
+        if(!/^image\/(jpeg|png|gif)$/i.test(blob.getContentType())||
+           blob.getSize()>3000000)continue;
+        options.inlineImages={listingPhoto:blob};
+        html+='<p><img src="cid:listingPhoto" alt="Wohnungsfoto" style="max-width:100%;height:auto"></p>';
+        break;
+      }catch(e){/* Image is optional; never block notification. */}
+    }
+    options.htmlBody=html+'</div>';
+    MailApp.sendEmail(options);
     data.notification_state='sent';
     data.notification_sent_at=new Date().toISOString();
     logImageDiagnostic('listing_notification',{status:'sent',listing_id:id});
@@ -1368,6 +1399,62 @@ function findDriveListingFiles_(listingId,mailId) {
   const root=getImageFolder(), prefixes=[String(listingId).toLowerCase().replace(/[^a-z0-9_-]+/g,'_')+'_','mail_'+mailId+'_'];
   const out=[]; const walk=folder=>{ const files=folder.getFiles(); while(files.hasNext()){const f=files.next();const n=f.getName();if(prefixes.some(p=>n.toLowerCase().startsWith(p)))out.push({file_id:f.getId(),name:n,drive_url:f.getUrl()});} const dirs=folder.getFolders();while(dirs.hasNext())walk(dirs.next());}; walk(root); return out;
 }
+/**
+ * Once-only, bounded recovery for old completed listings whose rent/area was
+ * discarded by quote validation. No guessed values, no cross-listing evidence.
+ */
+function recoverMissingListingEssentials_(ss,limit) {
+  const sheet=ss.getSheetByName('Anzeigen');
+  if(!sheet)return {checked:0,recovered:0};
+  const cols=getListingColumns_(sheet),last=sheet.getLastRow();
+  let checked=0,recovered=0;
+  for(let row=2;row<=last && checked<(limit||1);row++){
+    const rent=sheet.getRange(row,cols['Miete']+1).getValue(),
+      area=sheet.getRange(row,cols['Fläche']+1).getValue();
+    if(Number(rent)>0&&Number(area)>0)continue;
+    const raw=sheet.getRange(row,cols['Bildanalyse JSON']+1).getValue();
+    let data;try{data=parseAiListingJson_(raw);}catch(e){continue;}
+    const p=data.ai_pipeline||{};
+    if(data.essential_recovery_v1||p.page_status!=='ok'||
+       !p.page_check||p.page_check.status!=='matched'||
+       !['completed','no_images'].includes(data.ai_analysis_status))continue;
+    const url=String(sheet.getRange(row,cols['Anzeigenlink']+1).getValue()||''),
+      id=String(sheet.getRange(row,cols['Datensatz-ID']+1).getValue()||'');
+    if(!id||getMailListingId(url)!==id)continue;
+    checked++;
+    let outcome='no_verified_numbers';
+    try {
+      const page=fetchListingPageForProvider_(url);
+      if(page.status==='ok' && (!page.identity_id || page.identity_id===id)){
+        const found={};
+        if(!(Number(rent)>0)){
+          const n=recoverQuotedEssential_(page.text,'rent_eur');
+          if(n)found.rent_eur=n.value;
+        }
+        if(!(Number(area)>0)){
+          const n=recoverQuotedEssential_(page.text,'area_m2');
+          if(n)found.area_m2=n.value;
+        }
+        if(Object.keys(found).length){
+          for(const [key,value] of Object.entries(found))
+            setListingValue_(sheet,row,cols,key==='rent_eur'?'Miete':'Fläche',value);
+          data.extracted_fields=Object.assign({},data.extracted_fields||{},found);
+          p.page_fields=Object.assign({},p.page_fields||{},found);
+          updateListingRentPerSquareMeter_(sheet,row,cols);
+          const score=calculateListingScore_(data.extracted_fields,data.image_review||{});
+          setListingValue_(sheet,row,cols,'Preisbewertung (0–100)',
+            score.priceScore===null?'':score.priceScore);
+          recovered++;outcome='recovered';
+        }
+      }else outcome='page_unavailable_or_identity_mismatch';
+    }catch(e){outcome='fetch_error';}
+    data.essential_recovery_v1={at:new Date().toISOString(),result:outcome};
+    writeListingJson_(sheet,row,cols,data);
+    logImageDiagnostic('essential_recovery',{listing_id:id,status:outcome,row});
+  }
+  return {checked,recovered};
+}
+
 function fetchListingPageForProvider_(url) {
   const host=(String(url).match(/^https:\/\/([^/?#]+)/i)||[])[1]||'';
   const domains = {fotocasa:'fotocasa.es',idealista:'idealista.com',yaencontre:'yaencontre.com',
