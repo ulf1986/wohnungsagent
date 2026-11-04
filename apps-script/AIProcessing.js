@@ -268,6 +268,17 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
         blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,checked.pageCheck.reason);
         return {status:'unavailable',listingId};
       }
+      // Apply hard limits only after facts have been extracted from the mail/page.
+      // Remove the provisional row before it can enter the published list.
+      const eligibility = assessListingEligibility_(checked.fields, data);
+      if (eligibility.status === 'Ausgeschlossen' && hasListingHardLimitViolation_(checked.fields)) {
+        sheet.deleteRow(listingRow);
+        logImageDiagnostic('listing_filtered', {listing_id:listingId,status:'blocked',reason:eligibility.reason});
+        return {status:'blocked',listingId,reason:eligibility.reason};
+      }
+      // Never notify on unknown size/rent or a rejected listing.
+      if (eligibility.status === 'Geeignet')
+        notifyNewListing_(sheet, listingRow, cols, data, checked.fields, eligibility);
       setAiQueueState_(queue, rowNo, index, 'pending', '', '');
       return { status: 'text_extracted', listingId };
     }
@@ -913,6 +924,8 @@ function assessListingEligibility_(f, data) {
   const reasons=[];
   const rent = finiteNumber_(f.rent_eur), area = finiteNumber_(f.area_m2), rooms=finiteNumber_(f.rooms);
   if (rent !== '' && Number(rent) < 800) reasons.push('Miete unter 800 €');
+  if (rent !== '' && Number(rent) > 1200) reasons.push('Miete über 1.200 €');
+  if (area !== '' && Number(area) > 0 && Number(area) < 60) reasons.push('Fläche unter 60 m²');
   if (f.student_only === true) reasons.push('Nur für Studierende');
   if (f.seasonal_or_short_term === true || f.long_term === false || positive) reasons.push('Saison-/Kurzzeitmiete');
   if (rooms !== '' && Number(rooms) < 2) reasons.push('Weniger als 2 Zimmer');
@@ -924,6 +937,14 @@ function assessListingEligibility_(f, data) {
   if (f.long_term !== true || f.seasonal_or_short_term !== false) missing.push('Langzeitmiete nicht bestätigt');
   if (missing.length) return {status:'Prüfung erforderlich',reason:'Offen: '+missing.join(', '),seasonal:positive};
   return {status:'Geeignet',reason:'Langzeitmiete bestätigt; Pflichtangaben vorhanden',seasonal:false};
+}
+
+/** Hard numerical filters. Unknown values remain open for review, not rejected. */
+function hasListingHardLimitViolation_(fields) {
+  const rent=finiteNumber_((fields||{}).rent_eur);
+  const area=finiteNumber_((fields||{}).area_m2);
+  return (rent !== '' && (Number(rent)<800 || Number(rent)>1200)) ||
+    (area !== '' && Number(area)>0 && Number(area)<60);
 }
 
 /** Reclassify existing listings from stored JSON without additional AI calls. */
@@ -959,7 +980,11 @@ function reclassifyExistingListings() {
 
 function rentalDecision_(f) {
   const issues=[];
-  if (f.rent_eur !== null && f.rent_eur !== undefined && f.rent_eur !== '' && Number.isFinite(Number(f.rent_eur)) && Number(f.rent_eur) < 800) issues.push('Miete unter 800 €');
+  if (f.rent_eur !== null && f.rent_eur !== undefined && f.rent_eur !== '' && Number.isFinite(Number(f.rent_eur))) {
+    if (Number(f.rent_eur) < 800) issues.push('Miete unter 800 €');
+    if (Number(f.rent_eur) > 1200) issues.push('Miete über 1.200 €');
+  }
+  if (f.area_m2 !== null && f.area_m2 !== undefined && f.area_m2 !== '' && Number.isFinite(Number(f.area_m2)) && Number(f.area_m2)>0 && Number(f.area_m2)<60) issues.push('Fläche unter 60 m²');
   if (f.student_only === true) issues.push('Nur für Studierende');
   if (f.seasonal_or_short_term === true) issues.push('Saison-/Kurzzeitmiete');
   if (f.long_term === false) issues.push('Langzeitmiete nicht bestätigt');
@@ -1170,13 +1195,11 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   assign('Bildanalyse JSON',JSON.stringify(data));
   sheet.getRange(row,1,1,values.length).setValues([values]);
   SpreadsheetApp.flush();
-  notifyNewListing_(sheet,row,cols,data,{},
-    {status:'Vorläufig',reason:'Neue Anzeige; KI-Auswertung folgt.'});
+  // Notification is deferred until verified rent/area and suitability are known.
   return row;
 }
-/** One notification immediately after saving a newly created listing, before AI.
- * Old rows are deliberately not backfilled. Failed sends are logged but never
- * allowed to block the AI pipeline or cause repeated sends on every retry.
+/** One notification after extraction verifies the listing's suitability.
+ * Failed sends are logged but never block the AI pipeline or cause repeat sends.
  */
 function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
   if (!data.notification_eligible || data.notification_state ||
