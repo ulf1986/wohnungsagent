@@ -1240,7 +1240,7 @@ function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
       try {
         const blob=DriveApp.getFileById(photo.file_id).getBlob();
         if(!/^image\/(jpeg|png|gif)$/i.test(blob.getContentType())||
-           blob.getSize()>3000000)continue;
+           blob.getBytes().length>3000000)continue;
         options.inlineImages={listingPhoto:blob};
         html+='<p><img src="cid:listingPhoto" alt="Wohnungsfoto" style="max-width:100%;height:auto"></p>';
         break;
