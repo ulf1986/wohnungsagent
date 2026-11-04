@@ -112,3 +112,17 @@ test('multi-listing image selection excludes unassigned and other-listing files'
   assert.deepEqual(Array.from(call(`filterListingDriveFiles_(${JSON.stringify(files)}, 'idealista:1', true)`).map(file => file.file_id)), ['a','c','d','e']);
 });
 
+
+test('essential numeric fallback accepts only one clearly quoted price and area',()=>{
+  assert.equal(context.recoverQuotedEssential_('Alquiler: 1.150 €/mes','rent_eur').value,1150);
+  assert.equal(context.recoverQuotedEssential_('Superficie construida: 58 m²','area_m2').value,58);
+  assert.equal(context.recoverQuotedEssential_('Precio 1.100 €','rent_eur').value,1100);
+  assert.equal(context.recoverQuotedEssential_('80 m² y 60 m²','area_m2'),null);
+  assert.equal(context.recoverQuotedEssential_('1.000 €/mes o 1.250 €/mes','rent_eur'),null);
+  assert.equal(context.recoverQuotedEssential_('3 hab. sin precio','rent_eur'),null);
+});
+
+test('listing summary is capped without changing short texts',()=>{
+  assert.equal(context.compactListingSummary_('Hell und modern.'),'Hell und modern.');
+  assert.ok(context.compactListingSummary_('Ein heller Raum. '+('Gut geschnitten. '.repeat(40))).length<=220);
+});
