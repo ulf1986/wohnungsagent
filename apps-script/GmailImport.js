@@ -73,7 +73,8 @@ function runGmailImagePipeline() {
     runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 6));
     runImageDiagnosticStage('duplicate_reconcile', () => reconcileExistingDuplicates_(ss));
     runImageDiagnosticStage('rescore_existing', () => recalculateExistingListingScores_(ss, 10));
-    runImageDiagnosticStage('essential_recovery', () => recoverMissingListingEssentials_(ss, 1));
+    if (typeof recoverMissingListingEssentials_ === 'function')
+      runImageDiagnosticStage('essential_recovery', () => recoverMissingListingEssentials_(ss, 1));
 
     const queue = ss.getSheetByName(
       MAIL_IMPORT.sheetName
