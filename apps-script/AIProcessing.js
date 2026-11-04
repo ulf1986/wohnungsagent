@@ -637,8 +637,8 @@ function callListingExtraction_(config, source, subject, emailText, url, pageTex
 function recoverQuotedEssential_(text,field) {
   const source=String(text||'');
   const patterns=field==='rent_eur'
-    ? [/(?:alquiler|renta|precio|miete)\s*[:：]?\s*(\d{3,5}(?:[.,]\d{3})?)\s*€\s*(?:\/\s*mes|mensuales?)?/gi,
-       /\b(\d{3,5}(?:[.,]\d{3})?)\s*€\s*(?:\/\s*mes|al\s*mes|mensuales?)\b/gi]
+    ? [/(?:alquiler|renta|precio|miete)\s*[:：]?\s*((?:\d{1,2}[.,]\d{3}|\d{3,5}))\s*€\s*(?:\/\s*mes|mensuales?)?/gi,
+       /\b((?:\d{1,2}[.,]\d{3}|\d{3,5}))\s*€\s*(?:\/\s*mes|al\s*mes|mensuales?)\b/gi]
     : [/(?:superficie|superficie\s+construida|fläche|tamaño|size|area)\s*[:：]?\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2|etros\s+cuadrados)/gi,
        /\b(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2)\b/gi];
   const found=new Map();
