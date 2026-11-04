@@ -629,6 +629,27 @@ function callListingExtraction_(config, source, subject, emailText, url, pageTex
   },fieldTypes);
 }
 
+/**
+ * Exact, unambiguous rental prices and floor areas can be recovered when
+ * the model paraphrases a quote and the strict provenance check rejects it.
+ * Never infer numbers from unrelated listing text or multiple candidates.
+ */
+function recoverQuotedEssential_(text,field) {
+  const source=String(text||'');
+  const patterns=field==='rent_eur'
+    ? [/(?:alquiler|renta|precio|miete)\s*[:：]?\s*(\d{3,5}(?:[.,]\d{3})?)\s*€\s*(?:\/\s*mes|mensuales?)?/gi,
+       /\b(\d{3,5}(?:[.,]\d{3})?)\s*€\s*(?:\/\s*mes|al\s*mes|mensuales?)\b/gi]
+    : [/(?:superficie|superficie\s+construida|fläche|tamaño|size|area)\s*[:：]?\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2|etros\s+cuadrados)/gi,
+       /\b(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2)\b/gi];
+  const found=new Map();
+  for(const re of patterns) for(const hit of source.matchAll(re)){
+    const raw=hit[1];const value=Number(raw.replace(/\.(?=\d{3}(?:\D|$))/g,'').replace(',','.'));
+    if(!Number.isFinite(value)|| (field==='rent_eur' ? value<350||value>4000 : value<20||value>350))continue;
+    if(!found.has(value))found.set(value,hit[0]);
+  }
+  return found.size===1?{value:[...found.keys()][0],quote:[...found.values()][0]}:null;
+}
+
 function normalizeListingFacts_(raw,source,texts,fieldTypes) {
   const email={},page={},provenance=[],rejected=[];
   const normalize=s=>String(s || '').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
@@ -663,6 +684,16 @@ function normalizeListingFacts_(raw,source,texts,fieldTypes) {
         provenance.push(facts[0]);
       }
     }
+  }
+  // Numeric-only fallback; require a unique explicit literal in its own source.
+  // Other fields retain strict quote validation. Page identity is validated
+  // downstream by acceptListingPageResult_ before any page facts are applied.
+  for(const field of ['rent_eur','area_m2']) for(const [origin,target] of [['email',email],['listing_page',page]]) {
+    if(target[field]!==null && target[field]!==undefined)continue;
+    const found=recoverQuotedEssential_(texts[origin],field);
+    if(!found)continue;
+    target[field]=found.value;
+    provenance.push({field,source:origin,value:found.value,quote:found.quote,method:'literal_fallback'});
   }
   for(const [origin,target] of [['email',email],['listing_page',page]])
     target.evidence=provenance.filter(f=>f.source===origin).map(f=>origin+': '+f.quote);
@@ -755,6 +786,13 @@ function aggregateImageReviews_(reviews, summary) {
   return result;
 }
 
+function compactListingSummary_(value) {
+  const text=String(value||'').replace(/\s+/g,' ').trim();
+  if(text.length<=220)return text;
+  const prefix=text.slice(0,220),sentence=Math.max(prefix.lastIndexOf('. '),prefix.lastIndexOf('; '));
+  return (sentence>=110?prefix.slice(0,sentence+1):prefix.slice(0,217).trimEnd()+'…').trim();
+}
+
 function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   const image = data.image_review || {};
   const merged = mergeMissingOnly_(emailFields || {}, data.ai_pipeline.page_fields || {});
@@ -780,7 +818,7 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   setListingValue_(sheet,row,cols,'Zusammenfassung',
     (data.ai_pipeline.image_selection_legacy_count > AI_PIPELINE.maxImagesPerListing
       ? 'Bestandsbewertung vor der Zehnergrenze (' + data.ai_pipeline.image_selection_legacy_count + ' Bilder); keine weiteren Bilder gesendet. '
-      : data.ai_pipeline.image_selection_limited ? 'Bewertung anhand der ersten 10 Bilder. ' : '') + (image.summary || ''));
+      : data.ai_pipeline.image_selection_limited ? 'Bewertung anhand der ersten 10 Bilder. ' : '') + compactListingSummary_(image.summary));
   const features = [...(Array.isArray(merged.amenities) ? merged.amenities : [])];
   if (finiteNumber_(merged.rooms) !== '') features.unshift(String(merged.rooms).replace('.', ',') + ' Zimmer');
   setListingValue_(sheet,row,cols,'Merkmale',[...new Set(features.map(x=>String(x).trim()).filter(Boolean))].join('; '));
