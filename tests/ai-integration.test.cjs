@@ -88,34 +88,40 @@ test('blacklist prevents row creation and all AI calls',()=>{
   assert.deepEqual(x.calls,[]);
 });
 
-test('new listing notifies GMX as soon as its row is saved, before text or image AI',()=>{
+test('new listing notifies GMX after verified rent and area, including uncertain tenancy',()=>{
   const x=setup(), mails=[];
-  x.ctx.MailApp={sendEmail:mail=>{
-    assert.equal(x.value(x.listing,'Datensatz-ID'),'idealista:123');
-    assert.equal(JSON.parse(x.value(x.listing,'Bildanalyse JSON')).notification_state,'attempted');
-    assert.ok(!x.calls.includes('email'));assert.ok(!x.calls.includes('images'));
-    mails.push(mail);
-  }};
+  x.ctx.callListingExtraction_=()=>{x.calls.push('email');return {provenance_version:1,fields:{
+    title:'Wohnung',rent_eur:1000,area_m2:70,rooms:2,long_term:null,
+    seasonal_or_short_term:null,student_only:null,terrace:null,pool:null,amenities:[],restrictions:[]
+  },missing_fields:[]};};
+  x.ctx.MailApp={sendEmail:mail=>mails.push(mail)};
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   assert.equal(mails.length,1);assert.equal(mails[0].to,'ulf-marxen@gmx.de');
-  assert.match(mails[0].body,/Auswertung folgt/);assert.match(mails[0].body,/https:\/\/www.idealista.com\/inmueble\/123\//);
-  assert.ok(!mails[0].body.includes('Wohnungsbewertung:'));
+  assert.match(mails[0].body,/https:\/\/www.idealista.com\/inmueble\/123\//);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
-  x.setQueue('KI Verarbeitungsstatus','pending');x.setQueue('KI Abgeschlossene Anzeigen JSON','[]');
-  x.ctx.processNextAiListing(x.ss);
   assert.equal(mails.length,1);
 });
 
-test('new-entry notification is sent even when subsequent extraction fails, without duplicates on retry',()=>{
+test('unknown rent does not generate premature mail, even after extraction fails',()=>{
   const x=setup(),mails=[];x.ctx.MailApp={sendEmail:mail=>mails.push(mail)};
   x.ctx.callListingExtraction_=()=>{throw Error('429');};
-  assert.equal(x.ctx.processNextAiListing(x.ss).status,'needs_review');assert.equal(mails.length,1);
-  x.setQueue('KI Verarbeitungsstatus','pending');x.setQueue('KI Wiederholung ab UTC','');x.ctx.processNextAiListing(x.ss);
-  assert.equal(mails.length,1);assert.equal(JSON.parse(x.value(x.listing,'Bildanalyse JSON')).notification_state,'sent');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'needs_review');
+  assert.equal(mails.length,0);
+});
+
+test('unverified rent is retained for review but does not produce a notification',()=>{
+  const x=setup(),mails=[];x.ctx.MailApp={sendEmail:mail=>mails.push(mail)};
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
+  assert.equal(mails.length,0);
 });
 
 test('mail failure is recorded once and does not stop extraction or image processing',()=>{
   const x=setup();let attempts=0;
+  x.ctx.callListingExtraction_=()=>{x.calls.push('email');return {provenance_version:1,fields:{
+    title:'Wohnung',rent_eur:1100,area_m2:75,rooms:2,long_term:true,
+    seasonal_or_short_term:false,student_only:false,terrace:null,pool:null,amenities:[],restrictions:[]
+  },missing_fields:[]};};
   x.ctx.MailApp={sendEmail:()=>{attempts++;throw Error('Missing script.send_mail permission');}};
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
