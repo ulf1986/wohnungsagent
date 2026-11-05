@@ -277,7 +277,7 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
         return {status:'blocked',listingId,reason:eligibility.reason};
       }
       // Never notify on unknown size/rent or a rejected listing.
-      if (eligibility.status === 'Geeignet')
+      if (eligibility.status !== 'Ausgeschlossen')
         notifyNewListing_(sheet, listingRow, cols, data, checked.fields, eligibility);
       setAiQueueState_(queue, rowNo, index, 'pending', '', '');
       return { status: 'text_extracted', listingId };
@@ -853,6 +853,10 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   data.ai_analysis_status = 'completed';
   if (data.image_review) data.image_review.provisional = false;
   writeListingJson_(sheet,row,cols,data);
+  // Check once more after later sources have supplied missing facts.
+  // Legacy rows without a new-entry marker are deliberately not re-notified.
+  if (data.notification_phase === 'new_entry' && !data.notification_state)
+    notifyNewListing_(sheet,row,cols,data,merged,eligibility);
 }
 
 /**
@@ -937,6 +941,14 @@ function assessListingEligibility_(f, data) {
   if (f.long_term !== true || f.seasonal_or_short_term !== false) missing.push('Langzeitmiete nicht bestätigt');
   if (missing.length) return {status:'Prüfung erforderlich',reason:'Offen: '+missing.join(', '),seasonal:positive};
   return {status:'Geeignet',reason:'Langzeitmiete bestätigt; Pflichtangaben vorhanden',seasonal:false};
+}
+
+/** Notify only after both listing essentials are known and within range. */
+function hasVerifiedListingPriceAndArea_(fields) {
+  const rent=finiteNumber_((fields||{}).rent_eur);
+  const area=finiteNumber_((fields||{}).area_m2);
+  return rent !== '' && area !== '' && Number(area)>0 &&
+    !hasListingHardLimitViolation_(fields);
 }
 
 /** Hard numerical filters. Unknown values remain open for review, not rejected. */
@@ -1203,7 +1215,8 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
  */
 function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
   if (!data.notification_eligible || data.notification_state ||
-      eligibility.status === 'Ausgeschlossen') return;
+      eligibility.status === 'Ausgeschlossen' ||
+      !hasVerifiedListingPriceAndArea_(fields)) return;
   const recipient='ulf-marxen@gmx.de';
   const get=name=>cols[name]===undefined?'':String(sheet.getRange(row,cols[name]+1).getValue()||'');
   const id=get('Datensatz-ID'), title=get('Titel')||id, url=get('Anzeigenlink');
