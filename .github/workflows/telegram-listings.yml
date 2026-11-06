@@ -1,0 +1,64 @@
+name: Wohnungsagent – Telegram Wohnungsangebote
+
+on:
+  schedule:
+    # GitHub-Zeitplan kann verzoegert starten.
+    - cron: '2,12,22,32,42,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: wohnungsagent-telegram-listings
+  cancel-in-progress: false
+
+jobs:
+  send-listings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Code laden
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Bibliotheken installieren
+        run: python -m pip install --disable-pip-version-check 'google-auth>=2.28,<3' 'requests>=2.31,<3'
+
+      - name: Skriptsyntax prüfen
+        run: |
+          python -m py_compile scripts/telegram_watchdog.py
+          python -m py_compile scripts/telegram_listings.py
+
+      - name: Voraussetzungen prüfen
+        id: config
+        env:
+          BOT: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$BOT" ] || [ -z "$CHAT" ] || [ -z "$GOOGLE" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              echo "::warning::Telegram oder Google Dienstkonto noch nicht eingerichtet."
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID oder GOOGLE_SERVICE_ACCOUNT_JSON fehlt"
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Geeignete neue Wohnungen senden
+        if: steps.config.outputs.ready == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/telegram_listings.py
