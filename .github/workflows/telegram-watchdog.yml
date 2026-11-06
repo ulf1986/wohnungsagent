@@ -18,6 +18,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 concurrency:
   group: wohnungsagent-telegram-watchdog
@@ -26,7 +27,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Repository laden
         uses: actions/checkout@v4
@@ -40,7 +41,10 @@ jobs:
         run: python -m pip install --disable-pip-version-check 'google-auth>=2.28,<3' 'requests>=2.31,<3'
 
       - name: Skriptsyntax prüfen
-        run: python -m py_compile scripts/telegram_watchdog.py
+        run: python -m py_compile scripts/telegram_watchdog.py scripts/watchdog_checks.py
+
+      - name: Monitoring-Regressionstests
+        run: python -m unittest discover -s tests -p 'test_watchdog*.py' -v
 
       - name: Konfiguration prüfen
         id: config
@@ -72,6 +76,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python scripts/telegram_watchdog.py --mode "$MODE"
