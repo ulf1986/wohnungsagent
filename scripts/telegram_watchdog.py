@@ -7,6 +7,7 @@ state across ephemeral Actions runners. Only a minimal, non-sensitive summary is
 import argparse
 import datetime as dt
 import json
+import re
 import os
 import sys
 import urllib.error
@@ -123,6 +124,154 @@ def open_incident():
     return next((i for i in issues if i.get("title") == INCIDENT_TITLE and
                  "pull_request" not in i), None)
 
+def sheet_values(name, bounds, token):
+    encoded = urllib.parse.quote(f"'{name}'!{bounds}", safe="")
+    response = request_json(f"{API_SHEETS}/{SHEET_ID}/values/{encoded}",
+                            headers={"Authorization": "Bearer " + token})
+    return response.get("values", [])
+
+
+def gmail_refresh_token():
+    keys = ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN")
+    if not all(os.getenv(k) for k in keys):
+        return None
+    payload = urllib.parse.urlencode({
+        "client_id": os.environ[keys[0]], "client_secret": os.environ[keys[1]],
+        "refresh_token": os.environ[keys[2]], "grant_type": "refresh_token"
+    }).encode()
+    req = urllib.request.Request("https://oauth2.googleapis.com/token", data=payload,
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as response:
+            return json.load(response)["access_token"]
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"Gmail OAuth HTTP {error.code}") from None
+
+
+def gmail_messages():
+    """OAuth read-only reconciliation, including already trashed alerts."""
+    token = gmail_refresh_token()
+    if token is None:
+        return None
+    headers = {"Authorization": "Bearer " + token}
+    query = ('in:anywhere newer_than:6h '
+             '{label:"Wohnungssuche/Suchaufträge" '
+             'subject:"¡Nuevo piso en tu búsqueda" subject:"Nuevo · Piso"}')
+    url = ("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=300&q=" +
+           urllib.parse.quote(query))
+    response = request_json(url, headers=headers)
+    if response.get("nextPageToken"):
+        raise RuntimeError("Gmail-Suchabgleich unvollständig: mehr als 300 Kandidaten")
+    result = []
+    for message in response.get("messages", []):
+        mail_id = message["id"]
+        meta = request_json(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/" + mail_id +
+            "?format=metadata&metadataHeaders=Subject&metadataHeaders=From",
+            headers=headers)
+        fields = {h["name"].lower(): h["value"] for h in
+                  meta.get("payload", {}).get("headers", [])}
+        subject, sender = fields.get("subject", ""), fields.get("from", "").lower()
+        if not any(x in sender for x in ("idealista.com", "fotocasa.es", "pisos.com",
+                                         "yaencontre.com", "milanuncios.com",
+                                         "immobilienscout24.de")):
+            continue
+        if not (subject.startswith("¡Nuevo piso") or subject.startswith("Nuevo ") or
+                "Suchauftrag" in subject or "Nuevos inmuebles" in subject or
+                "nuevos pisos" in subject.lower()):
+            continue
+        received = dt.datetime.fromtimestamp(int(meta["internalDate"]) / 1000, UTC)
+        result.append({"id": mail_id, "received": received.isoformat()})
+    return result
+
+
+from watchdog_checks import problem
+
+
+def actions_health(now):
+    result = gh_request("/actions/workflows/telegram-listings.yml/runs?per_page=10")
+    completed = [r for r in result.get("workflow_runs", [])
+                 if r.get("status") == "completed"]
+    if not completed:
+        return [problem("TELEGRAM_WORKFLOW_MISSING", "sender", "Kein abgeschlossener Angebotsworkflow.")]
+    latest = completed[0]
+    parsed = parse_time(latest.get("updated_at"))
+    age = (now - parsed).total_seconds() / 60 if parsed else 9999
+    alerts = []
+    if age > 35:
+        alerts.append(problem("TELEGRAM_WORKFLOW_STALE", "sender",
+                              f"Angebotsworkflow seit {round(age)} Min. nicht abgeschlossen."))
+    if latest.get("conclusion") != "success":
+        alerts.append(problem("TELEGRAM_WORKFLOW_FAILED", "sender",
+                              f"Angebotsworkflow {latest.get('conclusion')}; Run {latest.get('id')}."))
+    return alerts
+
+
+def incident_state(issue):
+    if not issue:
+        return {}
+    match = re.search(r"\x60{3}json\s*(\{[\s\S]*?\})\s*\x60{3}",
+                      issue.get("body") or "")
+    if not match:
+        return {}
+    try:
+        state = json.loads(match.group(1))
+        return state.get("alerts", {}) if isinstance(state.get("alerts"), dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def incident_body(state):
+    fence = chr(96) * 3
+    return ("Automatisch verwaltete Monitoring-Zustände. Bitte nicht bearbeiten.\n\n" +
+            fence + "json\n" + json.dumps({"version": 2, "alerts": state},
+                                           ensure_ascii=False, separators=(",", ":")) +
+            "\n" + fence)
+
+
+def handle_incidents(alerts, now):
+    """Telegram acknowledgement is persisted only AFTER successful delivery."""
+    issue = open_incident()
+    previous = incident_state(issue)
+    active = {a["key"]: a for a in alerts}
+    notifications = []
+    for key, alert in active.items():
+        last = parse_time(previous.get(key, {}).get("notified_at"))
+        if last is None or (now - last).total_seconds() > 120 * 60:
+            notifications.append(alert)
+    recovered = [key for key in previous if key not in active]
+    if notifications:
+        lines = ["🚨 Wohnungsagent: " + str(len(notifications)) + " Monitoring-Störungen"]
+        for item in notifications[:12]:
+            lines.append(("❗ " if item["severity"] == "critical" else "⚠️ ") +
+                         item["code"] + ": " + item["detail"])
+        if len(notifications) > 12:
+            lines.append(f"… weitere {len(notifications) - 12} Störungen")
+        telegram("\n".join(lines)[:3900])
+    if recovered:
+        telegram("✅ Wohnungsagent: " + str(len(recovered)) +
+                 " Störung(en) behoben: " + ", ".join(recovered[:10])[:3000])
+    next_state = {}
+    for key, alert in active.items():
+        old = previous.get(key, {})
+        next_state[key] = {
+            "severity": alert["severity"], "detail": alert["detail"],
+            "first_seen": old.get("first_seen") or now.isoformat(),
+            "notified_at": now.isoformat() if alert in notifications else old.get("notified_at")
+        }
+    if next_state:
+        if issue:
+            gh_request("/issues/" + str(issue["number"]), "PATCH",
+                       {"body": incident_body(next_state)})
+        else:
+            gh_request("/issues", "POST",
+                       {"title": INCIDENT_TITLE, "body": incident_body(next_state)})
+    elif issue:
+        gh_request("/issues/" + str(issue["number"]), "PATCH",
+                   {"state": "closed", "state_reason": "completed"})
+    return len(active)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["check", "test"], default="check")
@@ -131,38 +280,48 @@ def main():
         telegram("✅ Wohnungsagent: Telegram-Test erfolgreich. Der GitHub-Workflow kann Nachrichten senden.")
         print("Telegram-Testnachricht gesendet.")
         return 0
-
+    from watchdog_checks import inspect
+    now = dt.datetime.now(UTC)
+    alerts = []
     try:
-        status, reason = evaluate(sheet_rows(), dt.datetime.now(UTC))
-    except Exception as error:
-        status, reason = "critical", "Monitoring kann Google Sheets nicht lesen: " + str(error)[:180]
-
-    print("Prüfergebnis:", status, reason)
-    incident = open_incident()
-    if status == "critical":
-        if incident:
-            print("Störung bereits gemeldet; kein erneuter Push.")
-            return 1
-        # Create issue first to suppress duplicate alerts on the next run.
-        issue = gh_request("/issues", method="POST",
-                           body={"title": INCIDENT_TITLE,
-                                 "body": "Automatischer Monitor-Alarm (UTC): " +
-                                 dt.datetime.now(UTC).isoformat() +
-                                 "\n\n" + reason +
-                                 "\n\nQuelle: Google Sheets > Läufe."})
+        token = google_token()
+        runs = sheet_values("Läufe", "A1:O3000", token)
+        status, reason = evaluate(runs, now)
+        if status == "critical":
+            alerts.append(problem("PIPELINE_HEALTH", "pipeline", reason))
+        queues = sheet_values("Verarbeitung", "H1:AC4000", token)
+        listings = sheet_values("Anzeigen", "A1:AO4000", token)
+        decisions = sheet_values("Entscheidungen", "A1:H10000", token)
+        prior_issues = gh_request("/issues?state=open&per_page=100")
+        sender = next((x for x in prior_issues if
+                       x.get("title") == "[Wohnungsagent] Telegram-Anzeigen Versandstatus"), None)
+        sent = set()
+        if sender:
+            match = re.search(r"\x60{3}json\s*(\{[\s\S]*?\})\s*\x60{3}",
+                              sender.get("body") or "")
+            if match:
+                sent = set(json.loads(match.group(1)).get("sent", []))
         try:
-            telegram("🚨 Wohnungsagent: Störung erkannt\n" + reason +
-                     "\nDetails: " + issue.get("html_url", "GitHub Issues"))
+            emails = gmail_messages()
+            if emails is None:
+                alerts.append(problem("GMAIL_MONITOR_NOT_CONFIGURED", "gmail",
+                                      "Unabhängiger Gmail-Abgleich benötigt drei OAuth-Secrets.",
+                                      "warning"))
         except Exception as error:
-            print("Telegram-Alarm fehlgeschlagen:", error, file=sys.stderr)
-            return 2
-        return 1
+            emails = None
+            alerts.append(problem("GMAIL_MONITOR_ERROR", "gmail", str(error)[:180]))
+        alerts.extend(inspect(queues, listings, decisions, sent, now, emails))
+    except Exception as error:
+        alerts.append(problem("MONITOR_DATA_ERROR", "sheets",
+                              "Monitoringdaten nicht lesbar: " + str(error)[:160]))
+    try:
+        alerts.extend(actions_health(now))
+    except Exception as error:
+        alerts.append(problem("ACTIONS_MONITOR_ERROR", "actions", str(error)[:160]))
+    print("Watchdog: ", len(alerts), "aktive Probleme:",
+          ", ".join(a["code"] for a in alerts[:20]))
+    return 1 if handle_incidents(alerts, now) else 0
 
-    if incident:
-        telegram("✅ Wohnungsagent: Entwarnung\n" + reason)
-        gh_request("/issues/" + str(incident["number"]), method="PATCH",
-                   body={"state": "closed", "state_reason": "completed"})
-    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
