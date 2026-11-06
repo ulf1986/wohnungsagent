@@ -75,11 +75,11 @@ function waMonitorLastQueue_(ss) {
   if (!q || q.getLastRow()<2) return ['', ''];
   const end=q.getLastRow();
   const first=Math.max(2,end-30);
-  const rows=q.getRange(first,8,end-first+1,12).getValues();
+  const rows=q.getRange(first,8,end-first+1,13).getValues();
   let newest='',changed='';
   for (const row of rows) {
     const at=row[1] instanceof Date ? row[1].toISOString() : String(row[1]||'');
-    const updated=row[11] instanceof Date ? row[11].toISOString() : String(row[11]||'');
+    const updated=row[12] instanceof Date ? row[12].toISOString() : String(row[12]||'');
     if (at>newest)newest=at;
     if (updated>changed)changed=updated;
   }
