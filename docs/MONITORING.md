@@ -25,6 +25,23 @@ Monitoring ist **fail-open**: Fehler beim Schreiben der Tabellen werden in der K
 
 GitHub Actions → **Apps Script – manueller Deploy** → Run workflow → Eingabe `DEPLOY`. Erst ein erfolgreicher `clasp push` aktiviert neue Monitoring-Funktionen. Beim nächsten Pipeline-Lauf entstehen die neuen Zeilen und bei Bedarf das Blatt **Entscheidungen**.
 
-## Noch nicht umgesetzt
+## Telegram-Watchdog (GitHub Actions)
 
-Externer Watchdog via GitHub Actions, Gmail-gegen-Sheets-Abgleich und Telegram-Push. Diese Bausteine folgen im zweiten Umsetzungsschritt; ein interner Lauf kann einen ausgefallenen eigenen Trigger nicht melden.
+Workflow: `.github/workflows/telegram-watchdog.yml`.
+
+Der Watchdog läuft unabhängig von Gmail und Apps Script alle 15 Minuten. Er prüft das private Blatt `Läufe` über die Google Sheets API: letzter erfolgreicher Abschluss maximal 25 Minuten alt, keine Warnung und keine wiederholte Nullverarbeitung trotz erkannter E-Mails.
+
+Ein offenes GitHub Issue `[Wohnungsagent] Monitoring-Störung` verhindert wiederholte Telegram-Alarme. Bei Erholung sendet der Workflow eine Entwarnung und schließt das Issue.
+
+### Einrichtung und Test
+
+1. GitHub Repository Secrets `TELEGRAM_BOT_TOKEN` und `TELEGRAM_CHAT_ID` hinterlegen.
+2. Unter **Actions → Wohnungsagent – Telegram Watchdog → Run workflow** den Modus `test` starten. Das sendet eine Testnachricht ohne Google-Zugriff.
+3. Google Cloud: Ein separates Dienstkonto anlegen, die **Google Sheets API** aktivieren und einen JSON-Schlüssel für das Dienstkonto erstellen.
+4. Den JSON-Schlüssel als GitHub Repository Secret `GOOGLE_SERVICE_ACCOUNT_JSON` speichern. Niemals in GitHub-Dateien committen.
+5. Das Spreadsheet `Wohnungsagent – Aktuelle Immobilien` für die E-Mail-Adresse dieses Dienstkontos als **Leser** freigeben.
+6. **Run workflow** im Modus `check` ausführen und das Ergebnis prüfen.
+
+Die bestehenden `CLASPRC_JSON`-Anmeldedaten sind für die Bereitstellung von Apps Script autorisiert, aber nicht garantiert für den Zugriff auf private Google-Sheets-Zellwerte.
+
+**Einschränkung:** Der externe Watchdog prüft die Lauf- und Queue-Signale aus der Tabelle, aber vergleicht derzeit nicht jeden Gmail-Eingang mit der Queue. Für einen vollständigen unabhängigen Abgleich würde der GitHub-Runner zusätzlich Gmail-Leseberechtigungen brauchen.
