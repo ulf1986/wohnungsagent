@@ -498,8 +498,8 @@ function runGmailImagePipeline() {
     // Gmail discovery and queue import always have priority over AI stages.
     if (Date.now() - pipelineStartedAt <
         (typeof AI_PIPELINE !== 'undefined' ? AI_PIPELINE.timeBudgetMs - 30000 : 150000)) {
-        if (typeof AI_PIPELINE !== 'undefined') {
-      try {
+      if (typeof AI_PIPELINE !== 'undefined') {
+        try {
         runImageDiagnosticStage('ai_processing', () => {
           const result = processNextAiListing(ss, queue);
           waMonitorAi_(imageDiagnosticRun && imageDiagnosticRun.mailId, result);
@@ -510,21 +510,19 @@ function runGmailImagePipeline() {
           });
           return result;
         });
-      } catch (error) {
-        logImageDiagnostic('ai_error', {
+        } catch (error) {
+          logImageDiagnostic('ai_error', {
           status: 'failed', level: 'ERROR', error: String(error.message || error)
         });
         waMonitorIssue_('KI-Verarbeitung: ' + error.message);
         console.error('KI-Verarbeitung: ' + error.message);
-      } finally {
-        if (imageDiagnosticRun) {
+        } finally {
+          if (imageDiagnosticRun) {
           imageDiagnosticRun.mailId = '';
           imageDiagnosticRun.provider = '';
         }
+        }
       }
-    }
-
-
     }
     try {
       runImageDiagnosticStage('identity_audit', () => auditListingImageAssignments(ss));
