@@ -15,7 +15,7 @@ Workflow: .github/workflows/telegram-watchdog.yml, alle 15 Minuten, read-only f�
 | GitHub Actions | Actions-API | Angebotsworkflow fehlgeschlagen oder länger als 35 Min. nicht abgeschlossen |
 | Hauptpipeline | Läufe | kein aktueller Abschluss, letzter Lauf mit Warnung/Fehler, wiederholter Importstillstand |
 
-Ein regulärer Ausschluss (Sperrliste, Dublette, nicht mehr verfügbar, fachlich ausgeschlossen) ist kein Incident. Der Watchdog sieht einzelne Mail- und Inserats-IDs, nicht nur die gesamte Pipeline. Er prüft jüngere Datensätze (bis 72 Stunden für die Queue und bis 48 Stunden für neue Anzeigen), um historische Altbestände nicht ungeplant zu alarmieren. Die Gmail-Suche erfasst die vergangenen sechs Stunden einschließlich Trash. Mehr als 300 Suchkandidaten führen zu einer Fehlermeldung, statt den Abgleich stillschweigend als vollständig zu behandeln.
+Ein regulärer Ausschluss (Sperrliste, Dublette, nicht mehr verfügbar, fachlich ausgeschlossen) ist kein Incident. Der Watchdog sieht einzelne Mail- und Inserats-IDs, nicht nur die gesamte Pipeline. Er überwacht offene Datensätze ab dem Monitoring-Aktivierungsdatum 6. November 2026 ohne automatische Verfallsfrist, damit ungeklärte Fehler nicht stillschweigend verschwinden. Die Gmail-Suche erfasst die vergangenen sechs Stunden einschließlich Trash. Ein einmal gemeldeter fehlender Gmail-Import bleibt auch nach diesem Suchfenster offen, bis die Gmail-ID in der Queue oder in Entscheidungen nachgewiesen ist. Mehr als 300 Suchkandidaten führen zu einer Fehlermeldung, statt den Abgleich stillschweigend als vollständig zu behandeln.
 
 ### Wichtige Sicherheitsregeln
 
