@@ -229,11 +229,21 @@ def incident_body(state):
             "\n" + fence)
 
 
-def handle_incidents(alerts, now):
+def handle_incidents(alerts, now, known_mail_ids=None):
     """Telegram acknowledgement is persisted only AFTER successful delivery."""
     issue = open_incident()
     previous = incident_state(issue)
     active = {a["key"]: a for a in alerts}
+    # A Gmail alert must survive its bounded Gmail search window. Clear it
+    # only after the mail is actually present in the Queue/Decisions ledger.
+    if known_mail_ids is not None:
+        for key, old in previous.items():
+            if key.startswith("MAIL_NOT_IMPORTED:") and key not in active:
+                mail_id = key.partition(":")[2]
+                if mail_id not in known_mail_ids:
+                    active[key] = {"key": key, "code": "MAIL_NOT_IMPORTED",
+                                   "severity": old.get("severity", "critical"),
+                                   "detail": old.get("detail", "Mail weiterhin nicht importiert.")}
     notifications = []
     for key, alert in active.items():
         last = parse_time(previous.get(key, {}).get("notified_at"))
@@ -283,6 +293,7 @@ def main():
     from watchdog_checks import inspect
     now = dt.datetime.now(UTC)
     alerts = []
+    known_mail_ids = None
     try:
         token = google_token()
         runs = sheet_values("Läufe", "A1:O3000", token)
@@ -292,6 +303,13 @@ def main():
         queues = sheet_values("Verarbeitung", "H1:AC4000", token)
         listings = sheet_values("Anzeigen", "A1:AO4000", token)
         decisions = sheet_values("Entscheidungen", "A1:H10000", token)
+        known_mail_ids = {str(row[0]) for row in queues[1:] if row and row[0]}
+        if decisions:
+            headers = [str(x) for x in decisions[0]]
+            if "Gmail-ID" in headers:
+                idx = headers.index("Gmail-ID")
+                known_mail_ids.update(str(row[idx]) for row in decisions[1:]
+                                      if len(row) > idx and row[idx])
         prior_issues = gh_request("/issues?state=open&per_page=100")
         sender = next((x for x in prior_issues if
                        x.get("title") == "[Wohnungsagent] Telegram-Anzeigen Versandstatus"), None)
@@ -320,7 +338,7 @@ def main():
         alerts.append(problem("ACTIONS_MONITOR_ERROR", "actions", str(error)[:160]))
     print("Watchdog: ", len(alerts), "aktive Probleme:",
           ", ".join(a["code"] for a in alerts[:20]))
-    return 1 if handle_incidents(alerts, now) else 0
+    return 1 if handle_incidents(alerts, now, known_mail_ids) else 0
 
 
 if __name__ == "__main__":
