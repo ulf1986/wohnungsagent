@@ -59,6 +59,8 @@ function runGmailImagePipeline() {
   }
 
   beginImageDiagnostics('gmail_pipeline');
+  waMonitorStart_();
+  let waPipelineFailed_ = false;
   try {
     const ss = SpreadsheetApp.openById(
       CONFIG.spreadsheetId
@@ -95,6 +97,7 @@ function runGmailImagePipeline() {
       try {
         runImageDiagnosticStage('ai_processing', () => {
           const result = processNextAiListing(ss, queue);
+          waMonitorAi_(imageDiagnosticRun && imageDiagnosticRun.mailId, result);
           logImageDiagnostic('ai_result', {
             status: result.status, listing_id: result.listingId || '',
             error: result.error || '',
@@ -106,6 +109,7 @@ function runGmailImagePipeline() {
         logImageDiagnostic('ai_error', {
           status: 'failed', level: 'ERROR', error: String(error.message || error)
         });
+        waMonitorIssue_('KI-Verarbeitung: ' + error.message);
         console.error('KI-Verarbeitung: ' + error.message);
       } finally {
         if (imageDiagnosticRun) {
@@ -129,6 +133,7 @@ function runGmailImagePipeline() {
       logImageDiagnostic('mail_scan', {
         level: 'ERROR', status: 'failed', error: String(error.message || error)
       });
+      waMonitorIssue_('Gmail-Suche: ' + error.message);
       console.error('Gmail-Suche: ' + error.message);
       if (/zu häufig aufgerufen: *gmail|too many times.*gmail|quota.*gmail/i.test(String(error.message || error))) {
         const until = new Date(Date.now() + MAIL_IMPORT.quotaCooldownMinutes * 60000).toISOString();
@@ -210,6 +215,7 @@ function runGmailImagePipeline() {
           setMailQueueStatus(queue, row, 'blocked',
             'Sperrliste: ' + blockedInMail.join(', '), new Date().toISOString());
           stats.blocked++;
+          waMonitorMail_(mailId, 'blocked', 'Sperrliste', propertyIds);
           trashQueuedSearchMail_(mail, 'blocked');
           continue;
         }
@@ -457,6 +463,8 @@ function runGmailImagePipeline() {
           ready ? new Date().toISOString() : ''
         );
 
+        waMonitorMail_(mailId, status, errors.join(' | ') ||
+          (status === 'ready_for_ai' ? 'Zur KI freigegeben' : 'Bild-/Linkprüfung'), propertyIds);
         stats.processed++;
         stats.uploaded += uploaded;
 
@@ -481,6 +489,7 @@ function runGmailImagePipeline() {
       } catch (error) {
         logImageDiagnostic('mail_error', { mail_id: mailId, level: 'ERROR', status: 'retry', error: error.message });
         stats.retry++;
+        waMonitorMail_(mailId, 'retry', error.message, []);
 
         console.error(
           mailId + ': ' + error.message
@@ -503,6 +512,7 @@ function runGmailImagePipeline() {
       if (selected.reconciled) p.setProperty(MAIL_IMPORT.gmailReconcileKey, selected.scanCheckpoint);
       logImageDiagnostic('gmail_checkpoint', { status: 'saved' });
     }
+    waMonitorStats_(stats);
     console.log('Gmail: ' + JSON.stringify(stats));
     if (imageDiagnosticRun) {
       imageDiagnosticRun.mailId = '';
@@ -554,9 +564,12 @@ try {
       console.error('Sortierung nach E-Mail-Eingang: ' + error.message);
     }
   } catch (error) {
+    waPipelineFailed_ = true;
+    waMonitorIssue_('Pipeline: ' + error.message);
     logImageDiagnostic('pipeline_error', { level: 'ERROR', status: 'failed', error: error.message });
     throw error;
   } finally {
+    waMonitorFinish_(waPipelineFailed_);
     finishImageDiagnostics();
     lock.releaseLock();
   }
