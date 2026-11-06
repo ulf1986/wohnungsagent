@@ -483,8 +483,8 @@ function runGmailImagePipeline() {
       if (selected.reconciled) p.setProperty(MAIL_IMPORT.gmailReconcileKey, selected.scanCheckpoint);
       logImageDiagnostic('gmail_checkpoint', { status: 'saved' });
     }
-    if (stats.candidates && stats.processed === 0)
-      waMonitorIssue_('Gmail-Kandidaten vorhanden, aber keine Mail verarbeitet');
+    if (stats.candidates && stats.processed === 0 && stats.blocked === 0)
+      waMonitorIssue_('Gmail-Kandidaten vorhanden, aber keine Mail verarbeitet oder gesperrt');
     waMonitorStats_(stats);
     console.log('Gmail: ' + JSON.stringify(stats));
     if (imageDiagnosticRun) {
