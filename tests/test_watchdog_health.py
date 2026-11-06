@@ -144,6 +144,35 @@ class AlertDelivery(unittest.TestCase):
             monitor.handle_incidents([critical], NOW)
         self.assertEqual(calls, ["telegram", "github"])
 
+    def test_missing_mail_alert_does_not_expire_with_gmail_search_window(self):
+        key = "MAIL_NOT_IMPORTED:mail1"
+        issue = {"number": 10, "body": monitor.incident_body({
+            key: {"severity": "critical", "detail": "mail1 missing",
+                  "first_seen": iso(500), "notified_at": iso(1)}
+        })}
+        writes = []
+        with mock.patch.object(monitor, "open_incident", return_value=issue), \
+             mock.patch.object(monitor, "telegram") as telegram, \
+             mock.patch.object(monitor, "gh_request", side_effect=lambda *args: writes.append(args)):
+            monitor.handle_incidents([], NOW, known_mail_ids=set())
+            telegram.assert_not_called()
+        self.assertEqual(len(writes), 1)
+        self.assertIn(key, writes[0][2]["body"])
+
+    def test_missing_mail_alert_resolves_after_queue_import(self):
+        key = "MAIL_NOT_IMPORTED:mail1"
+        issue = {"number": 10, "body": monitor.incident_body({
+            key: {"severity": "critical", "detail": "mail1 missing",
+                  "first_seen": iso(500), "notified_at": iso(1)}
+        })}
+        writes = []
+        with mock.patch.object(monitor, "open_incident", return_value=issue), \
+             mock.patch.object(monitor, "telegram") as telegram, \
+             mock.patch.object(monitor, "gh_request", side_effect=lambda *args: writes.append(args)):
+            monitor.handle_incidents([], NOW, known_mail_ids={"mail1"})
+            telegram.assert_called_once()
+        self.assertEqual(writes[0][2]["state"], "closed")
+
     def test_repeat_is_suppressed_until_reminder(self):
         key = "AI_HTTP_429:123"
         issue = {"number": 10, "body": monitor.incident_body({
