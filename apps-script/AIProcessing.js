@@ -1214,6 +1214,9 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
  * Failed sends are logged but never block the AI pipeline or cause repeat sends.
  */
 function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
+  // Telegram notifications are sent externally by GitHub Actions from the
+  // completed Anzeigen rows. Do not email preliminary/duplicate notifications.
+  return;
   if (!data.notification_eligible || data.notification_state ||
       eligibility.status === 'Ausgeschlossen' ||
       !hasVerifiedListingPriceAndArea_(fields)) return;
