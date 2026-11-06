@@ -45,3 +45,17 @@ Ein offenes GitHub Issue `[Wohnungsagent] Monitoring-Störung` verhindert wieder
 Die bestehenden `CLASPRC_JSON`-Anmeldedaten sind für die Bereitstellung von Apps Script autorisiert, aber nicht garantiert für den Zugriff auf private Google-Sheets-Zellwerte.
 
 **Einschränkung:** Der externe Watchdog prüft die Lauf- und Queue-Signale aus der Tabelle, aber vergleicht derzeit nicht jeden Gmail-Eingang mit der Queue. Für einen vollständigen unabhängigen Abgleich würde der GitHub-Runner zusätzlich Gmail-Leseberechtigungen brauchen.
+
+## Telegram-Benachrichtigungen für geeignete Wohnungen
+
+Workflow: `.github/workflows/telegram-listings.yml` (alle zehn Minuten sowie manuell).
+
+Der Workflow liest `Anzeigen` über das bestehende Google-Dienstkonto mit Leserechten, sendet in Telegram pro Anzeige eine kompakte HTML-Nachricht mit Mietpreis, Wohnfläche, Preis pro Quadratmeter, Bewertungen, KI-Kurztext und Direktlink. Ein geeignetes Quellbild wird optional per `sendPhoto` übertragen, andernfalls wird auf eine Textnachricht zurückgegriffen. Es werden nur Anzeigen mit `Status = Geeignet`, `KI-Bewertung = Abgeschlossen`, Wohnfläche mindestens 60 m² und Kaltmiete zwischen 800 und 1200 € verschickt. Pro Lauf höchstens sechs.
+
+Zur sicheren Deduplikation persistiert ein separates GitHub Issue `[Wohnungsagent] Telegram-Anzeigen Versandstatus` die bereits gesendeten Datensatz-IDs. Beim ersten Lauf werden ältere (über 24 Stunden) vorhandene Anzeigen ohne Nachricht initialisiert, damit es keine Massenbenachrichtigung gibt. Fehler vor erfolgreichem Telegram-Versand lassen eine Anzeige zur Wiederholung offen.
+
+Konfiguration: die **bereits bestehenden** Repository-Secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` und `GOOGLE_SERVICE_ACCOUNT_JSON`. Es ist kein zusätzliches Secret nötig.
+
+**Aktivierung:** GitHub Actions → `Wohnungsagent – Telegram Wohnungsangebote` → `Run workflow`. Den Lauf inklusive Log kontrollieren. Anschließend den Apps-Script-Deploy mit `DEPLOY` ausführen, damit `notifyNewListing_` keine GMX-Mails mehr versendet. Dieser Deploy beeinflusst den Telegram-Workflow nicht.
+
+Die Telegram-Benachrichtigung kommt erst nach abgeschlossener KI-Bewertung. Das unterscheidet sich bewusst von den früheren vorläufigen GMX-Mails.
