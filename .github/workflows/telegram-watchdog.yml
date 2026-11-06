@@ -43,6 +43,7 @@ jobs:
         run: python -m py_compile scripts/telegram_watchdog.py
 
       - name: Konfiguration prüfen
+        id: config
         env:
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'check' }}
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -54,11 +55,18 @@ jobs:
             exit 1
           fi
           if [ "$MODE" = "check" ] && [ -z "$GOOGLE_SA" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              echo "::warning::GOOGLE_SERVICE_ACCOUNT_JSON fehlt: geplante Checks sind noch nicht aktiviert."
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "::error::GOOGLE_SERVICE_ACCOUNT_JSON fehlt. Watchdog-Checks können noch nicht gestartet werden."
             exit 1
           fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
 
       - name: Telegram testen oder Pipeline prüfen
+        if: steps.config.outputs.ready == 'true'
         env:
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'check' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
