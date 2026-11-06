@@ -89,37 +89,6 @@ function runGmailImagePipeline() {
     }
 
     prepareMailQueue(queue);
-    // Existing ready-for-AI jobs already have their images in Drive.
-    // Advance one persisted AI stage BEFORE potentially slow new downloads.
-    // The global script lock above protects this entire operation.
-    if (typeof AI_PIPELINE !== 'undefined' &&
-        Date.now() - pipelineStartedAt < AI_PIPELINE.timeBudgetMs) {
-      try {
-        runImageDiagnosticStage('ai_processing', () => {
-          const result = processNextAiListing(ss, queue);
-          waMonitorAi_(imageDiagnosticRun && imageDiagnosticRun.mailId, result);
-          logImageDiagnostic('ai_result', {
-            status: result.status, listing_id: result.listingId || '',
-            error: result.error || '',
-            level: result.status === 'retry' ? 'WARN' : 'INFO'
-          });
-          return result;
-        });
-      } catch (error) {
-        logImageDiagnostic('ai_error', {
-          status: 'failed', level: 'ERROR', error: String(error.message || error)
-        });
-        waMonitorIssue_('KI-Verarbeitung: ' + error.message);
-        console.error('KI-Verarbeitung: ' + error.message);
-      } finally {
-        if (imageDiagnosticRun) {
-          imageDiagnosticRun.mailId = '';
-          imageDiagnosticRun.provider = '';
-        }
-      }
-    }
-
-
     // Discovery scans only messages newer than the persisted cursor.
     // Independently registered retries are loaded by Gmail message ID,
     // never by rescanning every old conversation.
@@ -526,6 +495,37 @@ function runGmailImagePipeline() {
       count: stats.processed, uploaded: stats.uploaded, errors: stats.retry,
       status: stats.retry ? 'has_retries' : 'completed'
     });
+    // Gmail discovery and queue import always have priority over AI stages.
+    if (Date.now() - pipelineStartedAt <
+        (typeof AI_PIPELINE !== 'undefined' ? AI_PIPELINE.timeBudgetMs - 30000 : 150000)) {
+        if (typeof AI_PIPELINE !== 'undefined') {
+      try {
+        runImageDiagnosticStage('ai_processing', () => {
+          const result = processNextAiListing(ss, queue);
+          waMonitorAi_(imageDiagnosticRun && imageDiagnosticRun.mailId, result);
+          logImageDiagnostic('ai_result', {
+            status: result.status, listing_id: result.listingId || '',
+            error: result.error || '',
+            level: result.status === 'retry' ? 'WARN' : 'INFO'
+          });
+          return result;
+        });
+      } catch (error) {
+        logImageDiagnostic('ai_error', {
+          status: 'failed', level: 'ERROR', error: String(error.message || error)
+        });
+        waMonitorIssue_('KI-Verarbeitung: ' + error.message);
+        console.error('KI-Verarbeitung: ' + error.message);
+      } finally {
+        if (imageDiagnosticRun) {
+          imageDiagnosticRun.mailId = '';
+          imageDiagnosticRun.provider = '';
+        }
+      }
+    }
+
+
+    }
     try {
       runImageDiagnosticStage('identity_audit', () => auditListingImageAssignments(ss));
     } catch (error) {
