@@ -10,7 +10,8 @@ import re
 UTC = dt.timezone.utc
 TERMINAL_MAIL = {"blocked", "duplicate", "completed"}
 TERMINAL_AI = {"completed", "duplicate", "blocked", "unavailable"}
-MAX_AGE_HOURS = 72
+MONITORING_START = dt.datetime(2026, 11, 6, tzinfo=UTC)
+# No expiry for unresolved work created after monitoring activation.
 
 
 def timestamp(value):
@@ -92,7 +93,7 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
         for message in gmail_messages:
             mail_id = str(message.get("id", ""))
             age = minutes(now, message.get("received"))
-            if mail_id and age is not None and 20 < age <= 360 and mail_id not in known_mail:
+            if mail_id and age is not None and age > 20 and mail_id not in known_mail:
                 alerts.append(problem("MAIL_NOT_IMPORTED", mail_id,
                                       f"Gmail-ID {mail_id}: seit {round(age)} Min. nicht in Queue/Entscheidungen."))
 
@@ -101,7 +102,7 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
         if not mail_id:
             continue
         age = minutes(now, row.get("Queue Eingang UTC"))
-        if age is None or age < 0 or age > MAX_AGE_HOURS * 60:
+        if age is None or age < 0 or timestamp(row.get('Queue Eingang UTC')) < MONITORING_START:
             continue
         mail_status = string(row, "Queue Bildstatus").lower()
         ai_status = string(row, "KI Verarbeitungsstatus").lower()
@@ -149,7 +150,7 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
 
     for listing_id, row in homes.items():
         age = minutes(now, row.get("Eingang (UTC)"))
-        if age is None or age < 0 or age > 48 * 60:
+        if age is None or age < 0 or timestamp(row.get('Eingang (UTC)')) < MONITORING_START:
             continue
         ai = string(row, "KI-Bewertung").lower()
         status = string(row, "Status").lower()
@@ -182,7 +183,7 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
     # Queue metadata can refer to several separate listing IDs in one digest.
     for row in rows:
         age = minutes(now, row.get("Queue Eingang UTC"))
-        if age is None or not 20 < age < MAX_AGE_HOURS * 60:
+        if age is None or age <= 20 or timestamp(row.get('Queue Eingang UTC')) < MONITORING_START:
             continue
         if string(row, "Queue Bildstatus") != "ready_for_ai":
             continue
