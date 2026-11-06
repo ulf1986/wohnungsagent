@@ -75,8 +75,8 @@ function runGmailImagePipeline() {
     runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 6));
     runImageDiagnosticStage('duplicate_reconcile', () => reconcileExistingDuplicates_(ss));
     runImageDiagnosticStage('rescore_existing', () => recalculateExistingListingScores_(ss, 10));
-    if (typeof recoverMissingListingEssentials_ === 'function')
-      runImageDiagnosticStage('essential_recovery', () => recoverMissingListingEssentials_(ss, 1));
+    // Expensive recovery is deliberately excluded from the 5-minute Gmail trigger.
+    // Run recoverMissingListingEssentials_ separately after clearing the mail backlog.
 
     const queue = ss.getSheetByName(
       MAIL_IMPORT.sheetName
@@ -170,6 +170,8 @@ function runGmailImagePipeline() {
           remaining: selected.length - stats.processed
         });
         scanPersisted = false;
+        waMonitorIssue_('Gmail-Import wegen Zeitbudget verschoben; ' +
+          (selected.length - stats.processed) + ' E-Mails warten');
         break;
       }
       const mailId = mail.getId();
@@ -512,6 +514,8 @@ function runGmailImagePipeline() {
       if (selected.reconciled) p.setProperty(MAIL_IMPORT.gmailReconcileKey, selected.scanCheckpoint);
       logImageDiagnostic('gmail_checkpoint', { status: 'saved' });
     }
+    if (stats.candidates && stats.processed === 0)
+      waMonitorIssue_('Gmail-Kandidaten vorhanden, aber keine Mail verarbeitet');
     waMonitorStats_(stats);
     console.log('Gmail: ' + JSON.stringify(stats));
     if (imageDiagnosticRun) {
