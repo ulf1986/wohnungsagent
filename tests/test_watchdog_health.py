@@ -104,8 +104,9 @@ class HealthRules(unittest.TestCase):
         self.assertIn("LISTING_FIELDS_MISSING", codes(found))
 
     def test_48h_ai_expiry(self):
-        rows = queue(age=49 * 60, ai_status="retry", retry_age=10)
-        found = checks.inspect(rows, [LCOLS], [DCOLS], set(), NOW)
+        rows = queue(age=0, ai_status="retry", retry_age=10)
+        found = checks.inspect(rows, [LCOLS], [DCOLS], set(),
+                               NOW + dt.timedelta(hours=49))
         self.assertIn("AI_EXPIRED", codes(found))
 
     def test_multi_listing_digest_incomplete(self):
