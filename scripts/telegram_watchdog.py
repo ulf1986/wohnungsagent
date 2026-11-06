@@ -94,7 +94,8 @@ def evaluate(rows, now):
     # Detect a persistent backlog without requiring new messages to arrive.
     recent = [(ts, r) for ts, r in valid if (now - ts).total_seconds() <= 45 * 60]
     stalled = [r for _, r in recent if int_or_zero(field(r, 5)) > 0 and
-               int_or_zero(field(r, 6)) == 0]
+               int_or_zero(field(r, 6)) == 0 and
+               int_or_zero(field(r, 8)) == 0]
     if len(stalled) >= 2 and len(stalled) == len(recent):
         return "critical", f"Letzte {len(stalled)} Läufe fanden Mails, importierten aber keine."
     if len(stalled) >= 3:
