@@ -51,17 +51,18 @@ const MAIL_IMPORT = {
  */
 function runGmailImagePipeline() {
   const pipelineStartedAt = Date.now();
+  if (typeof requestAiImportTurn_ === 'function') requestAiImportTurn_();
   const lock = LockService.getScriptLock();
 
   if (!lock.tryLock(1000)) {
     console.log('Pipeline läuft bereits.');
     return;
   }
-
-  beginImageDiagnostics('gmail_pipeline');
-  waMonitorStart_();
   let waPipelineFailed_ = false;
   try {
+    if (typeof clearAiImportTurn_ === 'function') clearAiImportTurn_();
+    beginImageDiagnostics('gmail_pipeline');
+    waMonitorStart_();
     const ss = SpreadsheetApp.openById(
       CONFIG.spreadsheetId
     );
@@ -495,8 +496,15 @@ function runGmailImagePipeline() {
       count: stats.processed, uploaded: stats.uploaded, errors: stats.retry,
       status: stats.retry ? 'has_retries' : 'completed'
     });
-    // Gmail discovery and queue import always have priority over AI stages.
-    if (Date.now() - pipelineStartedAt <
+    // The independent worker consumes AI stages between import runs. If trigger
+    // installation is denied, preserve the previous inline consumer as fallback.
+    let independentWorker = false;
+    try {
+      independentWorker = ensureAiWorkerTrigger_();
+    } catch (error) {
+      waMonitorIssue_('KI-Worker-Trigger nicht eingerichtet: ' + error.message);
+    }
+    if (!independentWorker && Date.now() - pipelineStartedAt <
         (typeof AI_PIPELINE !== 'undefined' ? AI_PIPELINE.timeBudgetMs - 30000 : 150000)) {
       if (typeof AI_PIPELINE !== 'undefined') {
         try {
@@ -571,9 +579,12 @@ try {
     logImageDiagnostic('pipeline_error', { level: 'ERROR', status: 'failed', error: error.message });
     throw error;
   } finally {
-    waMonitorFinish_(waPipelineFailed_);
-    finishImageDiagnostics();
-    lock.releaseLock();
+    try {
+      try { waMonitorFinish_(waPipelineFailed_); }
+      finally { finishImageDiagnostics(); }
+    } finally {
+      lock.releaseLock();
+    }
   }
 }
 
@@ -1112,4 +1123,5 @@ function getMailListingId(url) {
   }
   return '';
 }
+
 

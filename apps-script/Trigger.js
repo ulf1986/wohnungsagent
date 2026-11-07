@@ -32,6 +32,8 @@ function setupGmailImageTrigger() {
     .everyMinutes(5)
     .create();
 
+  ensureAiWorkerTrigger_();
+
   console.log(
     'Gmail-/Bildimport: alle 5 Minuten aktiviert.'
   );
@@ -74,7 +76,8 @@ function checkGmailImageTrigger() {
 function removeGmailImageTrigger() {
   const functions = [
     'runImageImport',
-    'runGmailImagePipeline'
+    'runGmailImagePipeline',
+    'runAiQueueWorker'
   ];
 
   let removed = 0;
@@ -94,3 +97,4 @@ function removeGmailImageTrigger() {
     'Entfernte Pipeline-Trigger: ' + removed
   );
 }
+

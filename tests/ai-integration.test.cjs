@@ -74,6 +74,38 @@ test('ready mail becomes a row, survives offline page, completes photos and neve
   assert.equal(x.listing.rows.filter(r=>r[headers.indexOf('Datensatz-ID')]==='idealista:123').length,1);
   assert.deepEqual(x.calls,['page','email','images']);
 });
+
+test('worker preflight preserves queue and makes no portal or AI request',()=>{
+  const x=setup();const before=JSON.stringify(x.queue.rows);
+  assert.equal(x.ctx.processNextAiListing(x.ss, x.queue, {peek:true}).status,'ready');
+  assert.deepEqual(x.calls,[]);
+  assert.equal(JSON.stringify(x.queue.rows),before);
+  assert.equal(x.value(x.listing,'Datensatz-ID'),undefined);
+});
+
+test('worker drains real text and ten-image checkpoints with no repeated API calls',()=>{
+  const x=setup({fileCount:10});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../apps-script/AiWorker.js'),'utf8'),x.ctx);
+  x.ctx.waMonitorAi_=()=>{};x.ctx.imageDiagnosticRun=null;
+  const result=x.ctx.drainAiQueue_(x.ss,x.queue);
+  assert.equal(result.steps,3);
+  assert.equal(x.value(x.queue,'KI Verarbeitungsstatus'),'completed');
+  assert.deepEqual(x.calls,['page','email','images','images']);
+  assert.equal(x.ctx.drainAiQueue_(x.ss,x.queue).steps,0);
+  assert.deepEqual(x.calls,['page','email','images','images']);
+});
+
+test('worker does not immediately repeat a definite rate-limited extraction',()=>{
+  const x=setup();
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../apps-script/AiWorker.js'),'utf8'),x.ctx);
+  x.ctx.waMonitorAi_=()=>{};x.ctx.imageDiagnosticRun=null;
+  let requests=0;
+  x.ctx.callListingExtraction_=()=>{requests++;throw Error('OpenAI HTTP 429');};
+  x.ctx.drainAiQueue_(x.ss,x.queue);
+  assert.equal(requests,1);
+  assert.equal(x.value(x.queue,'KI Verarbeitungsstatus'),'retry');
+  assert.ok(Date.parse(x.value(x.queue,'KI Wiederholung ab UTC'))>Date.now());
+});
 test('no images can finalize facts without a missing image_review crash',()=>{
   const x=setup({images:false});
   x.ctx.processNextAiListing(x.ss);
@@ -450,4 +482,5 @@ test('orphaned processing state is recovered under the exclusive lock using save
   assert.ok(x.value(x.queue,'KI Lauf-ID'));
   assert.ok(x.value(x.queue,'KI Ergebnis gespeichert UTC'));
 });
+
 

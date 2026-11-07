@@ -44,7 +44,7 @@ const AI_PIPELINE = {
 };
 
 /** Aufruf am Ende des bestehenden, gelockten 5-Minuten-Laufs. */
-function processNextAiListing(ss, queue) {
+function processNextAiListing(ss, queue, options) {
   getWohnungsagentSpreadsheetId_(); // Kein abweichendes Ziel für die KI zulassen.
   ss = ss || SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_());
   queue = queue || ss.getSheetByName(AI_PIPELINE.queueSheetName);
@@ -83,6 +83,7 @@ function processNextAiListing(ss, queue) {
     break;
   }
   if (!target) return { status: 'no_ready_jobs' };
+  if (options && options.peek) return { status: 'ready' };
 
   const links = parseJsonArray_(target.values[qi['Queue Inseratslinks JSON']]).map(canonicalListingUrl_).filter(Boolean);
   const ids = [...new Set(links.map(getMailListingId).filter(Boolean))];
@@ -1579,4 +1580,5 @@ function listingPageIdentityIds_(html) {
   }
   return [...new Set(ids)];
 }
+
 

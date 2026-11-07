@@ -85,7 +85,7 @@ function waMonitorLastQueue_(ss) {
   }
   return [newest,changed];
 }
-function waMonitorFinish_(failed) {
+function waMonitorFinish_(failed, runsSheetName) {
   const m = waMonitorRun_;
   waMonitorRun_ = null;
   if (!m) return;
@@ -95,7 +95,7 @@ function waMonitorFinish_(failed) {
     const note=m.issues.join(' | ').slice(0,900);
     const status=failed?'failed':m.issues.length||s.retry?'warning':'ok';
     const last=waMonitorLastQueue_(ss);
-    const runs=waMonitorSheet_(ss,WA_MONITOR.runs,WA_MONITOR.runHeaders);
+    const runs=waMonitorSheet_(ss,runsSheetName || WA_MONITOR.runs,WA_MONITOR.runHeaders);
     runs.appendRow([m.id,new Date(m.started).toISOString(),new Date().toISOString(),
       Math.round((Date.now()-m.started)/1000),status,s.candidates||0,
       s.processed||0,s.completed||0,s.blocked||0,s.retry||0,
@@ -130,3 +130,4 @@ function checkWohnungsagentHealth() {
   console.log(JSON.stringify(result));
   return result;
 }
+
