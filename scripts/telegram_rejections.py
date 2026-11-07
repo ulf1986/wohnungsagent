@@ -58,7 +58,7 @@ def rejected_decisions(rows, now):
 
 def message(item):
     provider = item["id"].split(":", 1)[0].capitalize()
-    reason = re.sub(r"\\s+", " ", item["reason"]).strip()
+    reason = re.sub(r"\s+", " ", item["reason"]).strip()
     gmail_url = "https://mail.google.com/mail/u/0/#all/" + item["mail_id"]
     return ("❌ <b>Wohnung ausgeschlossen</b>\n"
             + "Portal: " + html.escape(provider) + "\n"
