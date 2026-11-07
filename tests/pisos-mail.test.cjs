@@ -136,6 +136,9 @@ function runQueue(html, { blocked = [], oldFiles = [], failDownload = false, fet
       getMessageById: () => mail,
       getUserLabelByName: () => ({ getThreads: () => [{ getMessages: () => [mail] }] })
     },
+    // Queue-focused fixtures stub monitoring I/O, which is tested separately.
+    waMonitorStart_() {}, waMonitorIssue_() {}, waMonitorMail_() {},
+    waMonitorStats_() {}, waMonitorAi_() {}, waMonitorFinish_() {},
     prepareMailQueue() {}, readMailQueueIndex: () => ({ 'test-mail': { row: 2, status: 'retry' } }),
     readPreviouslyProcessedMailIds: () => new Set(), readMailImageBlacklist: () => new Set(blocked),
     getImageFolder: () => ({}), processExistingListingImages: () => ({}),

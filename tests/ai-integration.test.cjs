@@ -88,7 +88,7 @@ test('blacklist prevents row creation and all AI calls',()=>{
   assert.deepEqual(x.calls,[]);
 });
 
-test('new listing notifies GMX after verified rent and area, including uncertain tenancy',()=>{
+test('new listing defers delivery to Telegram even with verified rent and area',()=>{
   const x=setup(), mails=[];
   x.ctx.callListingExtraction_=()=>{x.calls.push('email');return {provenance_version:1,fields:{
     title:'Wohnung',rent_eur:1000,area_m2:70,rooms:2,long_term:null,
@@ -96,10 +96,11 @@ test('new listing notifies GMX after verified rent and area, including uncertain
   },missing_fields:[]};};
   x.ctx.MailApp={sendEmail:mail=>mails.push(mail)};
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
-  assert.equal(mails.length,1);assert.equal(mails[0].to,'ulf-marxen@gmx.de');
-  assert.match(mails[0].body,/https:\/\/www.idealista.com\/inmueble\/123\//);
+  assert.equal(mails.length,0);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
-  assert.equal(mails.length,1);
+  assert.equal(mails.length,0);
+  const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
+  assert.equal(data.notification_state,undefined);
 });
 
 test('unknown rent does not generate premature mail, even after extraction fails',()=>{
@@ -116,7 +117,7 @@ test('unverified rent is retained for review but does not produce a notification
   assert.equal(mails.length,0);
 });
 
-test('mail failure is recorded once and does not stop extraction or image processing',()=>{
+test('legacy GMX mail transport is never called during extraction or image processing',()=>{
   const x=setup();let attempts=0;
   x.ctx.callListingExtraction_=()=>{x.calls.push('email');return {provenance_version:1,fields:{
     title:'Wohnung',rent_eur:1100,area_m2:75,rooms:2,long_term:true,
@@ -126,8 +127,8 @@ test('mail failure is recorded once and does not stop extraction or image proces
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'completed');
   const data=JSON.parse(x.value(x.listing,'Bildanalyse JSON'));
-  assert.equal(attempts,1);assert.equal(data.notification_state,'failed');
-  assert.match(data.notification_error,/permission/);assert.deepEqual(x.calls,['page','email','images']);
+  assert.equal(attempts,0);assert.equal(data.notification_state,undefined);
+  assert.equal(data.notification_error,undefined);assert.deepEqual(x.calls,['page','email','images']);
 });
 
 test('blacklisted, duplicate and confirmed unavailable listings do not send new-entry notifications',()=>{

@@ -32,8 +32,9 @@ jobs:
 
       - name: Skriptsyntax prüfen
         run: |
-          python -m py_compile scripts/telegram_watchdog.py
+          python -m py_compile scripts/telegram_watchdog.py scripts/watchdog_checks.py
           python -m py_compile scripts/telegram_listings.py
+          python -m unittest discover -s tests -p 'test_watchdog*.py' -v
 
       - name: Voraussetzungen prüfen
         id: config
