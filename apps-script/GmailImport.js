@@ -762,9 +762,11 @@ function collectMailCandidates_(existing, processed) {
     // Fotocasa changed the subject to "Nuevo · Piso ..." and its Gmail
     // filter no longer attaches Wohnungssuche/Suchaufträge. Discover these
     // separately without admitting reminders, favorites or replies.
+    // Include Trash: search-alert messages are deliberately moved there after
+    // durable queuing. Without in:anywhere a recovery scan silently misses them.
     const searches = [
-      { query: 'label:"' + MAIL_IMPORT.label.replace(/"/g, '') + '"' + after, portal: '' },
-      { query: 'from:(fotocasa.es)' + after, portal: 'fotocasa' }
+      { query: 'in:anywhere label:"' + MAIL_IMPORT.label.replace(/"/g, '') + '"' + after, portal: '' },
+      { query: 'in:anywhere from:(fotocasa.es)' + after, portal: 'fotocasa' }
     ];
     let threadCount = 0;
     for (const search of searches) {
