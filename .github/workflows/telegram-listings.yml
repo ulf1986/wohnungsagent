@@ -33,7 +33,8 @@ jobs:
       - name: Skriptsyntax prüfen
         run: |
           python -m py_compile scripts/telegram_watchdog.py scripts/watchdog_checks.py
-          python -m py_compile scripts/telegram_listings.py
+          python -m py_compile scripts/telegram_listings.py scripts/telegram_rejections.py
+          python -m unittest discover -s tests -p 'test_telegram*.py' -v
           python -m unittest discover -s tests -p 'test_watchdog*.py' -v
 
       - name: Voraussetzungen prüfen
@@ -63,3 +64,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python scripts/telegram_listings.py
+
+      - name: Neue fachliche Ablehnungen melden
+        if: steps.config.outputs.ready == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/telegram_rejections.py
