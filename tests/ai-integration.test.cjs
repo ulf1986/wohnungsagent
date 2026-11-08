@@ -57,6 +57,34 @@ function setup({ blocked = false, images = true, fileCount = 1 } = {}) {
   return {ctx,listing,queue,blacklist,props,calls,logs,value,setQueue,ss,providerPageFetcher};
 }
 
+test('Yaencontre digest keeps the title, price, size and rooms after repeated listing links',()=>{
+  const x=setup();
+  const url=id=>'https://www.yaencontre.com/alquiler/piso/inmueble-53076-'+id;
+  const body=[
+    '<'+url(112880475)+'?utm_content=cont-principal-link-media-1>',
+    '<'+url(112880475)+'?utm_content=thumbnail-1>',
+    'Piso en alquiler en La Goleta',
+    '<'+url(112880475)+'?utm_content=cont-principal-link-inmueble-1>',
+    '950 €/mes',
+    '2 hab. | 1 baños | 83 m²',
+    '<'+url(112880475)+'?utm_content=cont-principal-cta-principal-1>',
+    '<'+url(112877530)+'?utm_content=cont-principal-link-media-2>',
+    'Apartamento en otra zona',
+    '<'+url(112877530)+'?utm_content=cont-principal-link-inmueble-2>',
+    '1.150 €/mes',
+    '3 hab. | 91 m²'
+  ].join('\\n\\n');
+  const first=x.ctx.extractListingMailExcerpt_(body,'yaencontre:112880475');
+  assert.match(first,/950 €\\/mes/);
+  assert.match(first,/83 m²/);
+  assert.match(first,/2 hab/);
+  assert.match(first,/La Goleta/);
+  assert.doesNotMatch(first,/1.150|91 m²|otra zona/);
+  const second=x.ctx.extractListingMailExcerpt_(body,'yaencontre:112877530');
+  assert.match(second,/1.150/);
+  assert.doesNotMatch(second,/950/);
+});
+
 test('ready mail becomes a row, survives offline page, completes photos and never creates duplicates',()=>{
   const x=setup();
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'text_extracted');
