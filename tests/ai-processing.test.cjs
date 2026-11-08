@@ -116,6 +116,8 @@ test('multi-listing image selection excludes unassigned and other-listing files'
 test('essential numeric fallback accepts only one clearly quoted price and area',()=>{
   assert.equal(context.recoverQuotedEssential_('Alquiler: 1.150 €/mes','rent_eur').value,1150);
   assert.equal(context.recoverQuotedEssential_('Superficie construida: 58 m²','area_m2').value,58);
+  assert.equal(context.recoverQuotedEssential_('Superficie construida: 75 m²; jardín 20 m²','area_m2').value,75);
+  assert.equal(context.recoverQuotedEssential_('80 m² construidos y 5 m² terraza','area_m2').value,80);
   assert.equal(context.recoverQuotedEssential_('Precio 1.100 €','rent_eur').value,1100);
   assert.equal(context.recoverQuotedEssential_('80 m² y 60 m²','area_m2'),null);
   assert.equal(context.recoverQuotedEssential_('1.000 €/mes o 1.250 €/mes','rent_eur'),null);
