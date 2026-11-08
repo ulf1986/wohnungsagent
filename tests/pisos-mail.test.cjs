@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const root = path.join(__dirname, '..');
 function context() {
   const ctx = vm.createContext({ console: { log() {}, warn() {}, error() {} } });
-  for (const name of ['Drive', 'Pisos', 'ImmoScout', 'Milanuncios', 'Diagnostics', 'GmailImport']) {
+  for (const name of ['Drive', 'Pisos', 'Yaencontre', 'ImmoScout', 'Milanuncios', 'Diagnostics', 'GmailImport']) {
     vm.runInContext(fs.readFileSync(path.join(root, 'apps-script', name + '.js'), 'utf8'), ctx);
   }
   return ctx;
