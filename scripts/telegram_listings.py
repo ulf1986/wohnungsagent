@@ -302,7 +302,7 @@ def card(row):
     if conditions and conditions != "Langzeitmiete bestätigt; Pflichtangaben vorhanden":
         lines.append(html.escape(conditions[:260]))
     lines.extend(["", f'<a href="{html.escape(clean_url, quote=True)}">Inserat öffnen</a>'])
-    return "\\n".join(lines)[:1000]
+    return "\n".join(lines)[:1000]
 
 def send(row):
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
