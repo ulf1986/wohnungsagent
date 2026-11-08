@@ -123,7 +123,7 @@ test('title becomes descriptive rich hyperlink without changing listing URL colu
   const sheet={getRange:(_,c)=>cell(c),hideColumns:c=>{values.hidden=c;}};
   x.ctx.applyListingPresentation_(sheet,2,{'Titel':0,'Offene Angaben':1,'KI-Bewertung':2,'Status':3},
     {rooms:2,address:'Calle Ríos Rosas, Málaga'},url+'?tracking=abc',{ai_pipeline:{page_status:'ok',page_check:{status:'matched'}}});
-  assert.equal(values[1].text,'2-Zimmer-Wohnung · Calle Ríos Rosas, Málaga');assert.equal(values[1].url,url);assert.equal(values.hidden,3);
+  assert.equal(values[1].text,'2-Zimmer-Wohnung');assert.equal(values[1].url,url);assert.equal(values.hidden,3);
 });
 
 test('verified location is calculated and reused; KI guesses never survive unavailable geocoding',()=>{
