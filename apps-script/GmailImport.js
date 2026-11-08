@@ -69,6 +69,8 @@ function runGmailImagePipeline() {
 
     // Migrate legacy columns before any code reads or writes listing headers.
     runImageDiagnosticStage('rating_columns', () => ensureListingRatingSchema_(ss));
+    // Keep backend columns intact but show only the fields needed in the rental shortlist.
+    runImageDiagnosticStage('compact_listing_view', () => applyCompactListingView_(ss));
 
     // User deletions must be honored before mail import and before any AI requests.
     runImageDiagnosticStage('marked_deletions', () => cleanupMarkedListings_(ss));
