@@ -96,8 +96,17 @@ class PreliminaryLinkTests(unittest.TestCase):
         }
         with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
             self.assertEqual(listings.early_candidates(NOW, set(), {}), [])
+        # A failed photo import alone must not trigger an unfiltered link.
         matrices["'Verarbeitung'!O1:Y2000"][1][0] = "retry"
         matrices["'Verarbeitung'!O1:Y2000"][1][1] = "Bilddownload HTTP 403"
+        with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
+            self.assertEqual(listings.early_candidates(NOW, set(), {}), [])
+        # A definite first AI attempt for this exact listing may trigger fallback.
+        matrices["'Verarbeitung'!O1:Y2000"][1][3] = "retry"
+        matrices["'Verarbeitung'!O1:Y2000"][1][4] = "OpenAI HTTP 429"
+        matrices["'Verarbeitung'!O1:Y2000"][1][6] = "idealista:1"
+        matrices["'Verarbeitung'!O1:Y2000"][1][8] = "1"
+        matrices["'Verarbeitung'!O1:Y2000"][1][10] = "idealista:1"
         with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
             self.assertEqual([x["id"] for x in listings.early_candidates(NOW, set(), {})],
                              ["idealista:1"])
