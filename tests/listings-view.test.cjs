@@ -23,12 +23,12 @@ test('compact listings shows only requested fields and keeps internal data intac
   };
   const ss = {getSheetByName: name => name === 'Anzeigen' ? sheet : null};
   const first = context.apply(ss);
-  assert.equal(first.visible, 9);
+  assert.equal(first.visible, 10);
   assert.equal(hidden.has(headers.indexOf('Bildanalyse JSON') + 1), true);
   assert.equal(hidden.has(headers.indexOf('Wohnungsbewertung (0–100)') + 1), true);
   assert.equal(hidden.has(headers.indexOf('Anzeigenlink') + 1), true);
   for (const name of ['Miete', 'Fläche', 'Miete pro m²', 'Vorschaubild',
-                       'Titel', 'Mietprüfung', 'Einschränkungen']) {
+                       'Titel', 'E-Mail-Eingang', 'Mietprüfung', 'Einschränkungen']) {
     assert.equal(hidden.has(headers.indexOf(name) + 1), false, name);
   }
   assert.equal(context.apply(ss).changedGroups, 0);
