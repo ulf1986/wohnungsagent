@@ -284,7 +284,14 @@ function backfillDuplicateRegistry_(ss,maxNew) {
     const records=readDuplicateRegistry_(registry);
     const match=matchDuplicateRegistry_(records,id,images);
     const source=[{id,url:String(row[urlCol]||'')}];
-    if(match.winner){matched++;saveDuplicateRecord_(registry,id,match.winner.entry.canonical||match.winner.entry.id,'duplicate',images,source,'Bestands-Duplikat anhand zweier Bilder');}
+    if(match.winner){
+      matched++;
+      const isBlocked=match.winner.entry.status==='blocked';
+      saveDuplicateRecord_(registry,id,match.winner.entry.canonical||match.winner.entry.id,
+        isBlocked?'blocked':'duplicate',images,source,
+        isBlocked?'Gesperrtes Objekt anhand zweier Bilder wiedererkannt':
+          'Bestands-Duplikat anhand zweier Bilder');
+    }
     else saveDuplicateRecord_(registry,id,id,images.length?'primary':'unsupported',images,source,
       match.possible?'Mögliche Dublette: '+match.possible.entry.id:'');
     known.add(id);added++;
