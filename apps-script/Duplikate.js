@@ -190,9 +190,12 @@ function duplicateTextFacts_(data, row, columns) {
     (x.source==='email'||x.source==='listing_page')&&String(x.quote||'').length>=3);
   const address=verified('address')?String(f.address||'').trim().toLowerCase().normalize('NFD')
     .replace(/[\u0300-\u036f]/g,'').replace(/[.,]/g,'').replace(/\s+/g,' '):'';
-  const val=(field,col)=>verified(field)?Number(row[columns[col]]):null;
-  return {address,area:val('area_m2','Fläche'),
-    rent:val('rent_eur','Miete'),rooms:verified('rooms')?Number(f.rooms):null};
+  const val=field=>{
+    if(!verified(field))return null;
+    const value=Number(f[field]);
+    return Number.isFinite(value)&&value>0?value:null;
+  };
+  return {address,area:val('area_m2'),rent:val('rent_eur'),rooms:val('rooms')};
 }
 function duplicateTextCandidate_(a,b) {
   // Address equality + at least two further facts avoids auto-associating
@@ -227,9 +230,13 @@ function detectTextDuplicateCandidates_(ss,maxRows) {
     return {id,url:String(r[cols['Anzeigenlink']]||''),facts:duplicateTextFacts_(parsed,r,cols),row:i+2};
   }).filter(Boolean);
   const records=readDuplicateRegistry_(registry),byId=new Map(records.map(r=>[r.id,r]));
+  const props=PropertiesService.getScriptProperties();
+  const cursorKey='DUPLICATE_TEXT_CURSOR_V1';
+  const start=Math.max(0,Math.min(relevant.length-1,Number(props.getProperty(cursorKey))||0));
+  const batch=Math.max(1,Math.min(30,Number(maxRows)||10));
   let checked=0,candidates=0;
-  for(const entry of relevant) {
-    if(checked>=Math.max(1,Math.min(30,Number(maxRows)||10)))break;
+  for(let offset=0;offset<Math.min(batch,relevant.length);offset++) {
+    const entry=relevant[(start+offset)%relevant.length];
     const record=byId.get(entry.id);
     if(record&&['duplicate','blocked'].includes(record.status))continue;
     checked++;
@@ -244,6 +251,7 @@ function detectTextDuplicateCandidates_(ss,maxRows) {
       'Textvergleich: mögliche Dublette '+matched.id+' (manuell prüfen)');
     candidates++;
   }
+  props.setProperty(cursorKey,String((start+Math.min(batch,relevant.length))%relevant.length));
   return {checked,candidates};
 }
 
