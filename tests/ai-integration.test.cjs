@@ -302,7 +302,8 @@ test('API error persists retry and repetition reuses existing row',()=>{
   assert.match(x.value(x.queue,'KI Fehler'),/429/);
   assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
   x.setQueue('KI Wiederholung ab UTC','');
-  assert.equal(x.ctx.processNextAiListing(x.ss).status,'retry');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'failed_final');
+  assert.equal(x.ctx.processNextAiListing(x.ss).status,'no_ready_jobs');
   assert.equal(x.listing.rows.filter(r=>r[headers.indexOf('Datensatz-ID')]==='idealista:123').length,1);
 });
 test('missing AI key still permits the new-entry alert; conflicting target is rejected',()=>{
