@@ -1,4 +1,16 @@
 /** Lightweight per-provider data-quality counters. No network requests or AI calls. */
+/** Locale-aware numeric test for the displayed German/Spanish spreadsheet format. */
+function providerQualityNumeric_(raw) {
+  if(typeof raw==='number')return Number.isFinite(raw)&&raw>0?raw:null;
+  let s=String(raw==null?'':raw).trim().replace(/[^0-9,.-]/g,'');
+  if(!s)return null;
+  if(s.includes(',')&&s.includes('.'))s=s.replace(/\./g,'').replace(',','.');
+  else if(s.includes(','))s=s.replace(',','.');
+  else if(/^\d{1,3}(?:\.\d{3})+$/.test(s))s=s.replace(/\./g,'');
+  const value=Number(s);
+  return Number.isFinite(value)&&value>0?value:null;
+}
+
 function auditProviderDataQuality_(ss) {
   const sheet=ss.getSheetByName('Anzeigen');
   if(!sheet||sheet.getLastRow()<2)return {checked:0,providers:{}};
@@ -17,8 +29,8 @@ function auditProviderDataQuality_(ss) {
     const portal=String(portals[i][0]||'').trim().toLowerCase()||'unknown';
     const row=stats[portal]||(stats[portal]={total:0,missing_rent:0,missing_area:0});
     checked++;row.total++;
-    if(!(Number(rents[i][0])>0))row.missing_rent++;
-    if(!(Number(areas[i][0])>0))row.missing_area++;
+    if(providerQualityNumeric_(rents[i][0])===null)row.missing_rent++;
+    if(providerQualityNumeric_(areas[i][0])===null)row.missing_area++;
   }
   for(const [provider,v] of Object.entries(stats)) {
     logImageDiagnostic('provider_quality',{
