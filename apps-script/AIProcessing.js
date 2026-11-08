@@ -38,7 +38,7 @@ const AI_PIPELINE = {
   referenceAddress: 'Alameda Principal 3, 29001, Málaga, España',
   retryBaseMinutes: 30,
   maxRetryAttempts: 3,
-  maxExpiryUpdatesPerRun: 25,
+  maxExpiryUpdatesPerRun: 8,
   processingTimeoutMinutes: 60,
   maxMailAgeHours: 48,
   timeBudgetMs: 180000,
