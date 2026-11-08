@@ -69,8 +69,7 @@ class PreliminaryLinkTests(unittest.TestCase):
             "idealista:6": {"Miete": "990 €", "Fläche": "70", "KI-Bewertung": "Abgeschlossen",
                             "Status": "Geeignet", "Anzeigenlink": urls[5], "Datensatz-ID": "idealista:6"},
             "idealista:7": {"Miete": "1100 €", "Fläche": "", "KI-Bewertung": "Ausstehend",
-                            "Bildanalyse JSON": '{"ai_pipeline":{"email_fields":{"title":"Wohnung"},
-                                                   "api_operation":{"status":"stored"}}}'},
+                            "Bildanalyse JSON": '{"ai_pipeline":{"email_fields":{"title":"Wohnung"},"api_operation":{"status":"stored"}}}'},
         }
         with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
             result = listings.early_candidates(NOW, set(), current)
