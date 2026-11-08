@@ -98,7 +98,7 @@ def find_listing_url(listing_id, mail_id, queue_rows):
             if parsed.scheme != "https" or not (hostname == domain or hostname.endswith("." + domain)):
                 continue
             # ID must appear in the property path, not merely in tracking parameters.
-            if re.search(r"(?<!\\d)" + re.escape(number) + r"(?!\\d)", parsed.path):
+            if re.search(r"(?<!\d)" + re.escape(number) + r"(?!\d)", parsed.path):
                 return urlunsplit(("https", parsed.netloc, parsed.path, "", ""))
     return ""
 
