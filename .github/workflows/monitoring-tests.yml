@@ -6,7 +6,9 @@ on:
       - 'scripts/telegram_watchdog.py'
       - 'scripts/watchdog_checks.py'
       - 'scripts/telegram_listings.py'
+      - 'scripts/telegram_rejections.py'
       - 'tests/test_watchdog*.py'
+      - 'tests/test_telegram*.py'
       - '.github/workflows/monitoring-tests.yml'
   push:
     branches: [main]
@@ -14,7 +16,9 @@ on:
       - 'scripts/telegram_watchdog.py'
       - 'scripts/watchdog_checks.py'
       - 'scripts/telegram_listings.py'
+      - 'scripts/telegram_rejections.py'
       - 'tests/test_watchdog*.py'
+      - 'tests/test_telegram*.py'
       - '.github/workflows/monitoring-tests.yml'
 
 permissions:
@@ -30,6 +34,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Syntaxcheck
-        run: python -m py_compile scripts/telegram_watchdog.py scripts/watchdog_checks.py scripts/telegram_listings.py
+        run: python -m py_compile scripts/telegram_watchdog.py scripts/watchdog_checks.py scripts/telegram_listings.py scripts/telegram_rejections.py
       - name: Regressionstests
-        run: python -m unittest discover -s tests -p 'test_watchdog*.py' -v
+        run: |
+          python -m unittest discover -s tests -p 'test_watchdog*.py' -v
+          python -m unittest discover -s tests -p 'test_telegram*.py' -v
