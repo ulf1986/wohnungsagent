@@ -346,15 +346,19 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       // Apply hard limits only after facts have been extracted from the mail/page.
       // Remove the provisional row before it can enter the published list.
       const eligibility = assessListingEligibility_(checked.fields, data);
-      if (eligibility.status === 'Ausgeschlossen' && hasListingHardLimitViolation_(checked.fields)) {
-        sheet.deleteRow(listingRow);
-        logImageDiagnostic('listing_filtered', {listing_id:listingId,status:'blocked',reason:eligibility.reason});
+      if (eligibility.status === 'Ausgeschlossen') {
+        blacklistExcludedListing_(ss, sheet, cols, listingId, listingUrl, eligibility.reason);
+        setAiQueueState_(queue, rowNo, index, 'blocked', eligibility.reason, '');
         return {status:'blocked',listingId,reason:eligibility.reason};
       }
       // Never notify on unknown size/rent or a rejected listing.
       if (eligibility.status !== 'Ausgeschlossen')
         notifyNewListing_(sheet, listingRow, cols, data, checked.fields, eligibility);
-      finalizeAiListing_(sheet, listingRow, cols, data, checked.fields);
+      const finalized = finalizeAiListing_(sheet, listingRow, cols, data, checked.fields);
+      if (finalized && finalized.status === 'blocked') {
+        setAiQueueState_(queue, rowNo, index, 'blocked', finalized.reason, '');
+        return {status:'blocked', listingId, reason:finalized.reason};
+      }
       setAiQueueState_(queue, rowNo, index, 'pending', '', '');
       return { status: 'completed', listingId };
     }
@@ -363,7 +367,11 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     // Migration: finish old text-extracted jobs without any image review API call.
     data.ai_pipeline.stage = 'completed';
     data.ai_pipeline.updated_at = new Date().toISOString();
-    finalizeAiListing_(sheet, listingRow, cols, data, emailFields);
+    const finalized = finalizeAiListing_(sheet, listingRow, cols, data, emailFields);
+    if (finalized && finalized.status === 'blocked') {
+      setAiQueueState_(queue, rowNo, index, 'blocked', finalized.reason, '');
+      return {status:'blocked', listingId, reason:finalized.reason};
+    }
     return { status: 'completed', listingId };
     const needsPage = listingPageMissingFields_(emailFields);
     if (!data.ai_pipeline.page_checked && needsPage.length) {
@@ -945,6 +953,14 @@ function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   // No geocoding in text-only mode.
   const score = calculateListingScore_(merged, image);
   const eligibility = assessListingEligibility_(merged, data);
+  if (eligibility.status === 'Ausgeschlossen') {
+    const listingId = String(sheet.getRange(row, cols['Datensatz-ID'] + 1).getValue() || '').trim();
+    const listingUrl = String(sheet.getRange(row, cols['Anzeigenlink'] + 1).getValue() || '');
+    if (!listingId || !listingUrl) throw new Error('Ausschluss ohne Anzeigen-ID oder URL; Zeile bleibt erhalten.');
+    blacklistExcludedListing_(SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_()),
+      sheet, cols, listingId, listingUrl, eligibility.reason);
+    return {status:'blocked',reason:eligibility.reason};
+  }
   const rentPoints = score.priceScore, imagePoints = score.imagePoints;
   const terracePoints = score.terracePoints, poolPoints = score.poolPoints;
   const coverage = score.coverage;
@@ -1112,6 +1128,13 @@ function reclassifyExistingListings() {
       const fields=data.extracted_fields||mergeMissingOnly_(p.email_fields||{},p.page_fields||{});
       if(!fields||!Object.keys(fields).length){skipped++;continue;}
       const eligibility=assessListingEligibility_(fields,data);
+      if (eligibility.status === 'Ausgeschlossen') {
+        const listingId=String(sheet.getRange(row,cols['Datensatz-ID']+1).getValue()||'');
+        const listingUrl=String(sheet.getRange(row,cols['Anzeigenlink']+1).getValue()||'');
+        blacklistExcludedListing_(ss,sheet,cols,listingId,listingUrl,eligibility.reason);
+        updated++;
+        continue;
+      }
       const old=String(sheet.getRange(row,cols['Status']+1).getValue()||'');
       const status=['Nicht mehr verfügbar','Verfügbarkeit ungeklärt'].includes(old)?old:eligibility.status;
       setListingValue_(sheet,row,cols,'Status',status);
@@ -1179,9 +1202,17 @@ function acceptListingPageResult_(result, page, listingId, knownEmail) {
   return {emailFields,pageFields,pageCheck,conflicts,fields:mergeMissingOnly_(emailFields,pageFields)};
 }
 
+function listingDisplayName_(fields, id) {
+  const rooms=finiteNumber_((fields||{}).rooms);
+  const type=rooms !== '' ? String(rooms).replace('.', ',') + '-Zimmer-Wohnung' : 'Wohnung';
+  // The raw URL remains in the hidden Anzeigenlink column for import/deduplication.
+  // No street address or email tracking parameters are shown in the short link.
+  const ref=String(id||'').split(':').pop().replace(/[^a-zA-Z0-9_-]/g,'').slice(0,24);
+  return ref ? type+' #'+ref : type;
+}
 function applyListingPresentation_(sheet,row,cols,fields,url,data) {
-  const rooms=finiteNumber_(fields.rooms);
-  const title=rooms !== '' ? String(rooms).replace('.',',')+'-Zimmer-Wohnung' : 'Wohnung';
+  const listingId=String(sheet.getRange(row,cols['Datensatz-ID']+1).getValue()||'');
+  const title=listingDisplayName_(fields,listingId);
   const cell=sheet.getRange(row,cols['Titel']+1);
   if (/^https:\/\//i.test(url) && typeof SpreadsheetApp.newRichTextValue === 'function')
     cell.setRichTextValue(SpreadsheetApp.newRichTextValue().setText(title).setLinkUrl(url.split(/[?#]/)[0]).build());
@@ -1480,6 +1511,34 @@ function getWohnungsagentSpreadsheetId_() {
   return CONFIG.spreadsheetId;
 }
 function isListingBlacklisted_(ss,id) { return readMailImageBlacklist(ss).has(String(id).trim().toLowerCase()); }
+/**
+ * Persist excluded listings before clearing the row, to prevent reimport.
+ * Clearing (rather than deleting) keeps row indices stable for queue consumers.
+ */
+function blacklistExcludedListing_(ss,sheet,cols,id,url,reason) {
+  if (!id || !url) throw new Error('Ausschluss ohne ID oder URL.');
+  const blacklist=ss.getSheetByName('Sperrliste');
+  if (!blacklist) throw new Error('Sperrliste fehlt; Anzeigenzeile bleibt erhalten.');
+  if (!isListingBlacklisted_(ss,id)) {
+    // Reuse an empty row when possible, instead of continually growing the sheet.
+    const last=Math.max(1,blacklist.getLastRow());
+    const ids=last>1?blacklist.getRange(2,1,last-1,1).getValues():[];
+    const vacant=ids.findIndex(x=>!String(x[0]||'').trim());
+    const next=vacant>=0?vacant+2:last+1;
+    blacklist.getRange(next,1,1,3).setValues([[id,url,String(reason||'Ausgeschlossen').slice(0,350)]]);
+    SpreadsheetApp.flush();
+    const saved=blacklist.getRange(next,1,1,3).getValues()[0];
+    if(saved[0]!==id || saved[1]!==url)
+      throw new Error('Sperrliste nicht bestätigt; Anzeigenzeile bleibt erhalten.');
+  }
+  const row=findListingRow_(sheet,cols,id,url);
+  if (row) {
+    sheet.getRange(row,1,1,sheet.getLastColumn()).clearContent();
+    setListingValue_(sheet,row,cols,'Zu löschen',false);
+  }
+  logImageDiagnostic('listing_blacklisted',{listing_id:id,status:'excluded',error:reason||''});
+}
+
 function blacklistUnavailableListing_(ss,sheet,cols,id,url,reason) {
   const blacklist=ss.getSheetByName('Sperrliste');
   if(!blacklist)throw new Error('Sperrliste fehlt; Anzeigenzeile bleibt erhalten.');
