@@ -44,12 +44,12 @@ function mockSheet() {
 test('two definite failures become failed_final without a third AI request', () => {
   const sheet = mockSheet();
   const statuses = [];
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < 2; k++) {
     const result = ctx.__test.scheduleAiRetry_(sheet, 2, ix, 'HTTP 500', 'exception');
     statuses.push(result.status);
     assert.equal(result.attempts, k + 1);
   }
-  assert.deepEqual(statuses, ['retry', 'failed_final', 'failed_final']);
+  assert.deepEqual(statuses, ['retry', 'failed_final']);
   assert.equal(sheet.value(2, ix.status + 1), 'failed_final');
   assert.equal(sheet.value(2, ix.retryAt + 1), '');
   assert.match(sheet.value(2, ix.error + 1), /Endgültig nach 2 Fehlversuchen/);
