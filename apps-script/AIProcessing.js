@@ -1338,132 +1338,21 @@ function appendListingRow_(sheet,cols,id,mailId,url,subject,q,qi,listingFiles) {
   // Notification is deferred until verified rent/area and suitability are known.
   return row;
 }
-/** One notification after extraction verifies the listing's suitability.
- * Failed sends are logged but never block the AI pipeline or cause repeat sends.
+/**
+ * E-Mail-Benachrichtigungen wurden zugunsten von Telegram deaktiviert.
+ * Signatur bewusst behalten: bestehende Verarbeitungsaufrufe bleiben stabil.
  */
 function notifyNewListing_(sheet,row,cols,data,fields,eligibility) {
-  // Telegram notifications are sent externally by GitHub Actions from the
-  // completed Anzeigen rows. Do not email preliminary/duplicate notifications.
-  return;
-  if (!data.notification_eligible || data.notification_state ||
-      eligibility.status === 'Ausgeschlossen' ||
-      !hasVerifiedListingPriceAndArea_(fields)) return;
-  const recipient='ulf-marxen@gmx.de';
-  const get=name=>cols[name]===undefined?'':String(sheet.getRange(row,cols[name]+1).getValue()||'');
-  const id=get('Datensatz-ID'), title=get('Titel')||id, url=get('Anzeigenlink');
-  // Mark before sending: at-most-once, even if Apps Script terminates mid-send.
-  data.notification_state='attempted';
-  data.notification_attempted_at=new Date().toISOString();
-  writeListingJson_(sheet,row,cols,data);
-  const text=(data.notification_phase === 'new_entry' ? [
-    'Neue Wohnungsanzeige – Auswertung folgt',
-    '',
-    'E-Mail-Betreff: '+title,
-    'Portal: '+get('Portal'),
-    'Eingang (UTC): '+get('Eingang (UTC)'),
-    '',
-    'Inserat: '+url,
-    'Datensatz: '+id,
-    '',
-    'Die Anzeige wurde neu in die Tabelle aufgenommen. KI-Auswertung und Eignungsprüfung folgen; die Angaben sind noch ungeprüft.'
-  ] : [
-    'Neue Wohnungsanzeige in Málaga',
-    '',
-    'Titel: '+title,
-    'Portal: '+get('Portal'),
-    'Miete: '+(fields.rent_eur == null?'Unbekannt':fields.rent_eur+' €'),
-    'Fläche: '+(fields.area_m2 == null?'Unbekannt':fields.area_m2+' m²'),
-    'Zimmer: '+(fields.rooms == null?'Unbekannt':fields.rooms),
-    'Wohnungsbewertung: '+(get('Wohnungsbewertung (0–100)')||'Offen')+' / 100',
-    'Preisbewertung: '+(get('Preisbewertung (0–100)')||'Offen')+' / 100',
-    'Status: '+eligibility.status,
-    'Mietprüfung: '+eligibility.reason,
-    '',
-    'Inserat: '+url,
-    'Datensatz: '+id
-  ]).join('\n');
-  try {
-    // Reuse an existing Drive photo. Never issue an additional HTTP request.
-    const htmlEscape=value=>String(value||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    const details=[
-      ['Portal',get('Portal')],['Miete',get('Miete')?get('Miete')+' €':'Noch offen'],
-      ['Fläche',get('Fläche')?get('Fläche')+' m²':'Noch offen'],
-      ['Miete pro m²',get('Miete pro m²')?get('Miete pro m²')+' €/m²':'Noch offen'],
-      ['Wohnungsbewertung',get('Wohnungsbewertung (0–100)')||'Noch offen'],
-      ['Preisbewertung',get('Preisbewertung (0–100)')||'Noch offen'],
-      ['Status',get('Status')||'Vorläufig']
-    ];
-    const safeUrl=/^https:\/\//i.test(url)?url:'';
-    const lines=details.map(([key,value])=>'<tr><td style="padding:5px 12px 5px 0"><b>'+htmlEscape(key)+
-      '</b></td><td>'+htmlEscape(value)+'</td></tr>').join('');
-    let html='<div style="font-family:Arial,sans-serif;max-width:620px">'+
-      '<h2>Neue Wohnungsanzeige</h2><p>'+htmlEscape(title)+'</p>'+
-      '<table>'+lines+'</table><p>Die KI-Auswertung kann noch ausstehen.</p>'+
-      (safeUrl?'<p><a href="'+htmlEscape(safeUrl)+'">Inserat öffnen</a></p>':'');
-    const options={to:recipient,subject:'Wohnungsagent: '+title,body:text,name:'Wohnungsagent'};
-    for(const photo of (data.drive_files||[])){
-      if(!photo.file_id)continue;
-      try {
-        const blob=DriveApp.getFileById(photo.file_id).getBlob();
-        if(!/^image\/(jpeg|png|gif)$/i.test(blob.getContentType())||
-           blob.getBytes().length>3000000)continue;
-        options.inlineImages={listingPhoto:blob};
-        html+='<p><img src="cid:listingPhoto" alt="Wohnungsfoto" style="max-width:100%;height:auto"></p>';
-        break;
-      }catch(e){/* Image is optional; never block notification. */}
-    }
-    options.htmlBody=html+'</div>';
-    MailApp.sendEmail(options);
-    data.notification_state='sent';
-    data.notification_sent_at=new Date().toISOString();
-    logImageDiagnostic('listing_notification',{status:'sent',listing_id:id});
-  } catch(error) {
-    data.notification_state='failed';
-    data.notification_error=String(error.message||error);
-    logImageDiagnostic('listing_notification',{status:'failed',level:'WARN',listing_id:id,error:data.notification_error});
-  }
-  writeListingJson_(sheet,row,cols,data);
+  // Telegram erfolgt separat über GitHub Actions; hier keine Nachricht senden.
 }
 
 /**
- * Run once manually from the Apps Script editor after deployment.
- * Google requests MailApp permission on the first run; a successful test
- * confirms that this authorization has actually been granted.
+ * Veralteter manueller E-Mail-Autorisierungseinstieg. Beim Aufruf keine Mail
+ * versenden und keine abgeschlossenen Anzeigen erneut benachrichtigen.
  */
 function authorizeAndRetryWohnungsagentNotifications() {
-  MailApp.sendEmail({
-    to: 'ulf-marxen@gmx.de',
-    subject: 'Wohnungsagent: E-Mail-Versand erfolgreich autorisiert',
-    body: 'Testnachricht: Der automatische Benachrichtigungsversand ist freigegeben.',
-    name: 'Wohnungsagent'
-  });
-  const ss = SpreadsheetApp.openById(getWohnungsagentSpreadsheetId_());
-  const sheet = ss.getSheetByName('Anzeigen');
-  if (!sheet) throw new Error('Anzeigen-Blatt fehlt.');
-  const cols = getListingColumns_(sheet);
-  const jsonCol = cols['Bildanalyse JSON'] + 1;
-  const values = sheet.getRange(2,jsonCol,Math.max(0,sheet.getLastRow()-1),1).getValues();
-  let resent=0, failed=0;
-  for(let i=0;i<values.length;i++) {
-    let data;
-    try { data=parseAiListingJson_(values[i][0]); }
-    catch(e) { continue; }
-    if(!data.notification_eligible || data.notification_state !== 'failed' ||
-       !/script\.send_mail|MailApp\.sendEmail|Berechtigung|authorization/i.test(String(data.notification_error||''))) continue;
-    const row=i+2;
-    const status=String(sheet.getRange(row,cols['Status']+1).getValue()||'');
-    if(status==='Ausgeschlossen' || !String(sheet.getRange(row,cols['Datensatz-ID']+1).getValue()||'')) continue;
-    delete data.notification_state;
-    delete data.notification_error;
-    notifyNewListing_(sheet,row,cols,data,data.extracted_fields||{},{
-      status:status,reason:String(sheet.getRange(row,cols['Mietprüfung']+1).getValue()||'')
-    });
-    const after=parseAiListingJson_(sheet.getRange(row,jsonCol).getValue());
-    if(after.notification_state==='sent') resent++; else failed++;
-  }
-  Logger.log('Wohnungsagent notification recovery: resent='+resent+', failed='+failed);
-  return {resent:resent,failed:failed};
+  Logger.log('Wohnungsagent: E-Mail-Benachrichtigungen sind deaktiviert; Telegram wird verwendet.');
+  return {status:'disabled',resent:0,failed:0};
 }
 
 function getListingColumns_(sheet) {
