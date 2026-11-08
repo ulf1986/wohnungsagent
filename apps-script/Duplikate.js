@@ -179,9 +179,77 @@ function checkDuplicateBeforeAi_(ss,id,url,files) {
     result.possible?'Bildähnlichkeit mit '+result.possible.entry.id+'; keine sichere Zuordnung':'');
   return {status:result.possible?'candidate':'primary',canonical:id};
 }
+/**
+ * Compare only independently verified listing facts. This is a review signal,
+ * never grounds for automatic blocking. Do NOT compare portal numeric IDs.
+ */
+function duplicateTextFacts_(data, row, columns) {
+  const p=(data&&data.ai_pipeline)||{},f=(data&&data.extracted_fields)||{};
+  const provenance=Array.isArray(p.field_provenance)?p.field_provenance:[];
+  const verified=name=>provenance.some(x=>x&&x.field===name&&
+    (x.source==='email'||x.source==='listing_page')&&String(x.quote||'').length>=3);
+  const address=verified('address')?String(f.address||'').trim().toLowerCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'').replace(/[.,]/g,'').replace(/\s+/g,' '):'';
+  const val=(field,col)=>verified(field)?Number(row[columns[col]]):null;
+  return {address,area:val('area_m2','Fläche'),
+    rent:val('rent_eur','Miete'),rooms:verified('rooms')?Number(f.rooms):null};
+}
+function duplicateTextCandidate_(a,b) {
+  // Address equality + at least two further facts avoids auto-associating
+  // unrelated apartments in the same building by price/area alone.
+  if(!a.address||!b.address||a.address!==b.address)return false;
+  const checks=[
+    [a.area,b.area,2],
+    [a.rent,b.rent,5],
+    [a.rooms,b.rooms,0]
+  ];
+  let agreed=0;
+  for(const [x,y,tolerance] of checks) {
+    if(!Number.isFinite(x)||!Number.isFinite(y)||x<=0||y<=0)continue;
+    if(Math.abs(x-y)>tolerance)return false;
+    agreed++;
+  }
+  return agreed>=2;
+}
+/** Bounded metadata-only review candidates. No new AI calls or row deletion. */
+function detectTextDuplicateCandidates_(ss,maxRows) {
+  const sheet=ss.getSheetByName('Anzeigen'),registry=ensureDuplicateRegistry_(ss);
+  if(!sheet||sheet.getLastRow()<3)return {checked:0,candidates:0};
+  const rows=sheet.getRange(1,1,sheet.getLastRow(),sheet.getLastColumn()).getValues();
+  const heads=rows.shift(),cols={};
+  ['Datensatz-ID','Anzeigenlink','Bildanalyse JSON','Miete','Fläche'].forEach(name=>{
+    cols[name]=heads.indexOf(name);if(cols[name]<0)throw new Error('Dubletten-Textprüfung: '+name);
+  });
+  const relevant=rows.map((r,i)=>{
+    const id=String(r[cols['Datensatz-ID']]||'');
+    if(!id)return null;
+    let parsed={};try{parsed=JSON.parse(String(r[cols['Bildanalyse JSON']]||'{}'));}catch(_){}
+    return {id,url:String(r[cols['Anzeigenlink']]||''),facts:duplicateTextFacts_(parsed,r,cols),row:i+2};
+  }).filter(Boolean);
+  const records=readDuplicateRegistry_(registry),byId=new Map(records.map(r=>[r.id,r]));
+  let checked=0,candidates=0;
+  for(const entry of relevant) {
+    if(checked>=Math.max(1,Math.min(30,Number(maxRows)||10)))break;
+    const record=byId.get(entry.id);
+    if(record&&['duplicate','blocked'].includes(record.status))continue;
+    checked++;
+    if(!entry.facts.address)continue;
+    const matched=relevant.find(other=>other.id!==entry.id&&
+      duplicateTextCandidate_(entry.facts,other.facts));
+    if(!matched)continue;
+    // Retain photo-based 'primary' judgement; review hint does not override it.
+    if(record&&record.status==='primary'&&record.photos.length)continue;
+    saveDuplicateRecord_(registry,entry.id,entry.id,'candidate',
+      record?.photos||[],[{id:entry.id,url:entry.url}],
+      'Textvergleich: mögliche Dublette '+matched.id+' (manuell prüfen)');
+    candidates++;
+  }
+  return {checked,candidates};
+}
+
 function backfillDuplicateRegistry_(ss,maxNew) {
   const registry=ensureDuplicateRegistry_(ss);
-  const known=new Set(readDuplicateRegistry_(registry).filter(x=>x.photos.length||x.status==='unsupported').map(x=>x.id));
+  const known=new Set(readDuplicateRegistry_(registry).filter(x=>x.photos.length).map(x=>x.id));
   const sheet=ss.getSheetByName('Anzeigen');
   if(!sheet||sheet.getLastRow()<2)return {added:0};
   const header=sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
@@ -194,8 +262,17 @@ function backfillDuplicateRegistry_(ss,maxNew) {
     const id=String(row[idCol]||'').trim();
     if(!id||known.has(id))continue;
     let parsed={};try{parsed=JSON.parse(String(row[jsonCol]||'{}'));}catch(_){}
-    const files=parsed.drive_files||[];
+    // New images can arrive after an earlier unsupported decision.
+    // Reuse only correctly owned files; never mix digest thumbnails.
+    const ownedFiles=(parsed.drive_files||[]).filter(file=>
+      file&&file.file_id&&(!file.listing_id||file.listing_id===id));
+    const files=ownedFiles.length?ownedFiles:
+      (Array.isArray(parsed.ai_pipeline?.image_selection)?
+        parsed.ai_pipeline.image_selection.filter(file=>
+          file&&file.file_id&&(!file.listing_id||file.listing_id===id)) : []);
+    if(!files.length)continue;
     const images=fingerprintListingFiles_(files,DUPLICATES.imageLimit);
+    if(!images.length)continue;
     const records=readDuplicateRegistry_(registry);
     const match=matchDuplicateRegistry_(records,id,images);
     const source=[{id,url:String(row[urlCol]||'')}];
