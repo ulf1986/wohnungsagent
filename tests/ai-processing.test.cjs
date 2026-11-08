@@ -100,6 +100,46 @@ test('image batch validation rejects missing, duplicate and out-of-range image s
   assert.throws(() => call(`validateImageReview_(${JSON.stringify(invalid)},1)`), /Bildpunktwert/);
 });
 
+test('completed digest is reopened only for pending owned photos while under 48h',()=>{
+  const now=Date.now(),id='idealista:112799167';
+  const listingHead=['Datensatz-ID','Bildanalyse JSON'];
+  const data={ai_analysis_status:'pending',analyzed_file_ids:[],
+    drive_files:[{file_id:'p1',listing_id:id}],
+    ai_pipeline:{email_fields:{title:'Wohnung'},api_operation:{status:'stored'}}};
+  const listingRows=[listingHead,[id,JSON.stringify(data)]];
+  const queueHead=['Queue Gmail-ID','Queue Eingang UTC','Queue Bildstatus',
+    'Queue Inseratslinks JSON','KI Verarbeitungsstatus','KI Fehler','KI Wiederholung ab UTC',
+    'KI Abgeschlossene Anzeigen JSON','KI Aktuelle Anzeigen-ID'];
+  const queueRows=[queueHead,['mail',new Date(now-3600000).toISOString(),'ready_for_ai',
+    '["https://example.test/listing/112799167"]','completed','','',
+    '["'+id+'"]','']];
+  const sheet=(rows)=>({
+    getLastRow:()=>rows.length,getLastColumn:()=>rows[0].length,
+    getRange:(r,c,n=1,m=1)=>({
+      getValues:()=>Array.from({length:n},(_,i)=>rows[r+i-1].slice(c-1,c-1+m)),
+      getValue:()=>rows[r-1][c-1],
+      setValue:value=>{rows[r-1][c-1]=value;},
+      clearContent:()=>{rows[r-1][c-1]='';}
+    })
+  });
+  const ss={getSheetByName:name=>name==='Anzeigen'?sheet(listingRows):null};
+  const queue=sheet(queueRows);
+  const qi={'Queue Bildstatus':2,'Queue Eingang UTC':1,'Queue Inseratslinks JSON':3,'Queue Gmail-ID':0};
+  const ix={status:4,error:5,retryAt:6,doneIds:7,activeId:8};
+  context.AI_PIPELINE={listingSheetName:'Anzeigen',maxMailAgeHours:48};
+  context.isListingBlacklisted_=()=>false;
+  context.logImageDiagnostic=()=>{};
+  const result=context.reopenCompletedAiImageJobs_(ss,queue,queueRows.slice(1),ix,qi,now,2);
+  assert.equal(result.reopened,1);
+  assert.equal(queueRows[1][4],'pending');
+  assert.equal(queueRows[1][7],'[]');
+  assert.equal(queueRows[1][8],id);
+  assert.equal(context.reopenCompletedAiImageJobs_(ss,queue,queueRows.slice(1),ix,qi,now,2).reopened,0);
+  queueRows[1][4]='completed';queueRows[1][7]='["'+id+'"]';
+  queueRows[1][1]=new Date(now-49*3600000).toISOString();
+  assert.equal(context.reopenCompletedAiImageJobs_(ss,queue,queueRows.slice(1),ix,qi,now,2).reopened,0);
+});
+
 test('multi-listing image selection excludes unassigned and other-listing files', () => {
   const files = [
     {file_id:'a',listing_id:'idealista:1',name:'preview.jpg'},
