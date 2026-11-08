@@ -253,6 +253,14 @@ const scoutPhotoNames = [
   '8e6a4030-6374-43b6-8267-cf30ba27d8f1-2077304076.jpg'
 ];
 
+test('ImmoScout sender is disabled before other portal links are considered',()=>{
+  const ctx=context();
+  assert.equal(ctx.isDisabledImmoScoutMail_({getFrom:()=> 'Alerts <noreply@immobilienscout24.de>'}),true);
+  assert.equal(ctx.isDisabledImmoScoutMail_({getFrom:()=> 'service@mailer.is24.de'}),true);
+  assert.equal(ctx.isDisabledImmoScoutMail_({getFrom:()=> 'piso@pisos.com'}),false);
+  assert.equal(ctx.isDisabledImmoScoutMail_({getFrom:()=> 'fake@immobilienscout24.de.evil.test'}),false);
+});
+
 test('ImmoScout mail is ignored entirely by the current ingestion pipeline', () => {
   const ctx=context();
   for (const html of [fixture(scoutInstant),fixture(scoutWelcome)]) {
