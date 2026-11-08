@@ -143,11 +143,15 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
         # stalled alert follows when retryAt is overdue or progress has stopped.
         # A queue which has never started is backlog, not a failed API call.
         # Alert only after substantial inactivity; active retries respect retryAt.
-        if age > 180 and (ai_status != "retry" or retry_age is None or retry_age > 30):
-            if last_step is not None and last_step > 120:
-                alerts.append(problem("AI_QUEUE_STALLED", identity,
-                                      f"{identity}: KI-Status {ai_status or 'pending'}, "
-                                      f"letzter Schritt vor {round(last_step)} Min.", "warning"))
+        overdue_retry = (ai_status == "retry" and retry_age is not None and
+                         retry_age > 15 and (last_step is None or last_step > 60))
+        idle_worker = (age > 180 and last_step is not None and last_step > 120 and
+                       (ai_status != "retry" or retry_age is None or retry_age > 30))
+        if overdue_retry or idle_worker:
+            alerts.append(problem("AI_QUEUE_STALLED", identity,
+                                  f"{identity}: KI-Status {ai_status or 'pending'}, "
+                                  f"letzter Schritt vor {round(last_step) if last_step is not None else '?'} Min.",
+                                  "warning"))
         if age >= 48 * 60:
             alerts.append(problem("AI_EXPIRED", identity,
                                   f"{identity}: 48-Stunden-Frist überschritten; Queue-Status noch {ai_status or 'pending'}.",
@@ -207,6 +211,8 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
         if age is None or age <= 20 or timestamp(row.get('Queue Eingang UTC')) < MONITORING_START:
             continue
         if string(row, "Queue Bildstatus") != "ready_for_ai":
+            continue
+        if string(row, "KI Verarbeitungsstatus").lower() in ("failed_final", "expired"):
             continue
         ids = json_value(string(row, "Queue Inseratslinks JSON"), [])
         if not ids:
