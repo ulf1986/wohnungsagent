@@ -197,6 +197,8 @@ function runGmailImagePipeline() {
         const linkedImages = [
           ...extractPisosMailImages(html),
           ...extractYaencontreMailImages(html),
+          ...extractAnchoredPortalMailImages_(html, 'fotocasa'),
+          ...extractAnchoredPortalMailImages_(html, 'idealista'),
           ...extractMilanunciosMailImages(html)
         ];
         const photoOwners = url => [...new Set(linkedImages
@@ -205,6 +207,7 @@ function runGmailImagePipeline() {
         const isLinkedPhoto = url =>
           isPisosPropertyImageUrl(url) ||
           isYaencontrePropertyImageUrl(url) ||
+          isPropertyImageUrl(url) ||
           isMilanunciosPropertyImageUrl(url);
         const ambiguousPhotos = allMailImageUrls.filter(url => photoOwners(url).length > 1);
         // In Sammelmails ausschließlich eindeutig einem nicht gesperrten
@@ -233,7 +236,8 @@ function runGmailImagePipeline() {
           (propertyIds.length === 1 ||
             eligibleIds.includes(fileOwner(file))) &&
           (!isLinkedPhoto(file.source_url) ||
-            photoOwners(file.source_url).length === 1));
+            (photoOwners(file.source_url).length === 1 ||
+              (propertyIds.length === 1 && isYaencontrePropertyImageUrl(file.source_url)))));
 
         const allFiles = [...oldFiles];
         const fileIds = new Set(
@@ -1056,11 +1060,37 @@ function extractPropertyImageUrls(html) {
   // Fotos dieser Portale benötigen den Inseratslink im umschließenden Bildblock.
   for (const image of [
     ...extractPisosMailImages(html), ...extractYaencontreMailImages(html),
+    ...extractAnchoredPortalMailImages_(html,'fotocasa'),
+    ...extractAnchoredPortalMailImages_(html,'idealista'),
     ...extractMilanunciosMailImages(html)
   ]) {
     result.add(image.source_url);
   }
   return [...result];
+}
+
+/**
+ * Assign Fotocasa / Idealista images only if their enclosing anchor points to
+ * exactly the same listing. Unanchored images remain usable only in single ads.
+ */
+function extractAnchoredPortalMailImages_(html, provider) {
+  if (!['fotocasa','idealista'].includes(provider)) return [];
+  const results=[],seen=new Set();
+  for(const a of String(html||'').matchAll(/<a\\b([^>]*)>([\\s\\S]*?)<\\/a\\s*>/gi)){
+    const listingUrl=getMailHtmlAttribute('<a '+a[1]+'>','href');
+    const listingId=getMailListingId(listingUrl);
+    if(!listingId||!listingId.startsWith(provider+':'))continue;
+    for(const tag of a[2].match(/<img\\b[^>]*>/gi)||[]){
+      const src=getMailHtmlAttribute(tag,'src')||getMailHtmlAttribute(tag,'data-src');
+      if(!isPropertyImageUrl(src))continue;
+      const host=(String(src).match(/^https:\\/\\/([^/]+)/i)||[])[1]||'';
+      if(provider==='fotocasa'&&host!=='static.fotocasa.es')continue;
+      if(provider==='idealista'&&!/(^|\\.)img\\d*\\.idealista\\.com$/i.test(host))continue;
+      const key=listingId+'|'+src;if(seen.has(key))continue;
+      seen.add(key);results.push({listing_id:listingId,listing_url:listingUrl,source_url:src});
+    }
+  }
+  return results;
 }
 
 /** Tag-Attribute: beide Anführungszeichen und unquoted HTML unterstützen. */
