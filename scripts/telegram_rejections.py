@@ -111,7 +111,8 @@ def message(item):
             + "Portal: " + html.escape(provider) + "\n"
             + "Inserat: <code>" + html.escape(item["id"]) + "</code>\n"
             + "Grund: " + html.escape(reason[:650]) + "\n"
-            + ('<a href="' + html.escape(listing_url, quote=True) + '">Inserat öffnen</a>'\n               if listing_url else "Inserat-Link nicht verfügbar"))
+            + ('<a href="' + html.escape(listing_url, quote=True) + '">Inserat öffnen</a>'
+               if listing_url else "Inserat-Link nicht verfügbar"))
 
 
 def send(item):
