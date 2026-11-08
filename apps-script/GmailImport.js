@@ -276,62 +276,7 @@ function runGmailImagePipeline() {
 
         const imageUrls = [...mailImageUrls];
 
-        // Galerien der verlinkten Idealista-Inserate.
-        const idealistaIds = [
-          ...new Set(
-            links
-              .map(extractIdealistaListingId)
-              .filter(Boolean)
-          )
-        ];
-
-        for (const listingId of idealistaIds.filter(id => eligibleIds.includes('idealista:' + id))) {
-          const relatedFiles = allFiles.filter(
-            file =>
-              String(file.name || '').startsWith(
-                'idealista_' + listingId + '_'
-              )
-          );
-
-          const gallery = downloadIdealistaGallery(
-            listingId, relatedFiles
-          );
-
-          uploaded += gallery.created;
-
-          if (gallery.status !== 'completed') {
-            galleryUnavailable = true;
-
-            console.warn(
-              'Idealista ' + listingId +
-              ': ' + gallery.status +
-              ' (' + gallery.message + ')'
-            );
-
-            if (gallery.status === 'retry') {
-              errors.push(
-                'Idealista ' + listingId +
-                ': unvollständiger Bilddownload'
-              );
-            }
-          }
-
-          for (const url of gallery.urls || []) {
-            if (!imageUrls.includes(url)) {
-              imageUrls.push(url);
-            }
-          }
-
-          for (const file of gallery.files || []) {
-            if (
-              file.file_id &&
-              !fileIds.has(file.file_id)
-            ) {
-              allFiles.push(file);
-              fileIds.add(file.file_id);
-            }
-          }
-        }
+        // Lightweight mode: no Idealista gallery downloads or backfill.
 
         // Vorhandene E-Mail-Vorschaubilder
         // zusätzlich erhalten bzw. herunterladen.
