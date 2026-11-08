@@ -149,6 +149,11 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
     imageDiagnosticRun.mailId = mailId;
     imageDiagnosticRun.provider = getImageDiagnosticProvider({ listing_id: listingId });
   }
+  // Existing queued ImmoScout rows are terminally skipped after deactivation.
+  if (/^immoscout:/i.test(String(listingId||''))) {
+    setAiQueueState_(queue, rowNo, index, 'blocked', 'ImmoScout-Import deaktiviert.', '');
+    return {status:'blocked',listingId};
+  }
   const listingUrl = links.find(url => getMailListingId(url) === listingId) || '';
   const oneListing = new Set(links.map(getMailListingId).filter(Boolean)).size === 1;
   const listingMailText = oneListing ? body : extractListingMailExcerpt_(body, listingId);
