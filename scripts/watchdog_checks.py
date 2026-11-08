@@ -187,6 +187,7 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
         analysis_status = str(data.get("ai_analysis_status") or "").lower()
         # no_images is a deliberate terminal outcome. An existing Drive attachment
         # may be a mail thumbnail that was not safely attributed to the listing.
+        # Image analysis is intentionally disabled. Old photo states are not incidents.
         if analysis_status in ("no_images", "completed"):
             continue
         # Pending listings are expected while earlier jobs use the single AI worker.
@@ -198,12 +199,7 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
             alerts.append(problem("LISTING_AI_STALLED", listing_id,
                                   f"{listing_id}: KI-Bewertung seit {round(completed_age)} Min. ohne Fortschritt.",
                                   "warning"))
-        if (data.get("drive_files") and not data.get("analyzed_file_ids")
-                and updated_age is not None and updated_age > 180
-                and analysis_status in ("processing", "pending")):
-            alerts.append(problem("IMAGE_ANALYSIS_STALLED", listing_id,
-                                  f"{listing_id}: Bildanalyse seit {round(updated_age)} Min. ohne Fortschritt.",
-                                  "warning"))
+        # No IMAGE_ANALYSIS_STALLED alerts in thumbnail-only mode.
 
     # Queue metadata can refer to several separate listing IDs in one digest.
     for row in rows:
