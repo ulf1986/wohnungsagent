@@ -9,6 +9,7 @@ const LISTING_COMPACT_VIEW = Object.freeze({
   sheetName: 'Anzeigen',
   visible: [
     'Zu löschen',
+    'E-Mail-Eingang',
     'Vorschaubild',
     'Titel',
     'Miete',
