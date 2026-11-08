@@ -204,11 +204,7 @@ function runGmailImagePipeline() {
         const photoOwners = url => [...new Set(linkedImages
           .filter(image => image.source_url === url)
           .map(image => image.listing_id).filter(Boolean))];
-        const isLinkedPhoto = url =>
-          isPisosPropertyImageUrl(url) ||
-          isYaencontrePropertyImageUrl(url) ||
-          isPropertyImageUrl(url) ||
-          isMilanunciosPropertyImageUrl(url);
+        const isLinkedPhoto = url => isPropertyImageUrl(url);
         const ambiguousPhotos = allMailImageUrls.filter(url => photoOwners(url).length > 1);
         // In Sammelmails ausschließlich eindeutig einem nicht gesperrten
         // Inserat zugewiesene Mailfotos herunterladen.
@@ -237,7 +233,7 @@ function runGmailImagePipeline() {
             eligibleIds.includes(fileOwner(file))) &&
           (!isLinkedPhoto(file.source_url) ||
             (photoOwners(file.source_url).length === 1 ||
-              (propertyIds.length === 1 && isYaencontrePropertyImageUrl(file.source_url)))));
+              (propertyIds.length === 1 && /^(?:yaencontre|fotocasa|idealista):/.test(propertyIds[0])))));
 
         const allFiles = [...oldFiles];
         const fileIds = new Set(
