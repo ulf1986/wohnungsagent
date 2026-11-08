@@ -189,20 +189,10 @@ def early_candidates(now, seen, current):
                 continue
             if listing and text(listing, "KI-Bewertung").lower() == "abgeschlossen":
                 continue
-            # We do not notify merely because a mail has entered the queue.
-            attempted = first_attempt_finished(queue, listing, listing_id)
-            # Import failed before reaching the text worker: allow fallback,
-            # but only after the first import failure was persisted.
-            import_failed = (len({preliminary_listing_id(link) for link in links
-                                  if preliminary_listing_id(link)}) == 1 and
-                             queue["mail_status"] in
-                             ("retry", "gallery_unavailable", "no_images") and
-                             bool(queue["mail_error"]))
-            if not attempted and not import_failed:
-                continue
-            # Link-only messages on an import failure get a short grace period
-            # for an otherwise healthy first pass to finish.
-            if import_failed and not attempted and age < 5 * 60:
+            # Do not bypass the minimum-area filter just because image import
+            # failed. A recorded per-listing AI screening attempt is required.
+            # A broken import remains visible to the separate watchdog.
+            if not first_attempt_finished(queue, listing, listing_id):
                 continue
             if listing_id not in candidates or received > candidates[listing_id]["received"]:
                 candidates[listing_id] = {
