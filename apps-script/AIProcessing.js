@@ -67,6 +67,9 @@ function processNextAiListing(ss, queue, options) {
   const now = Date.now();
   // Persist terminal state instead of leaving 48h-old queue jobs indefinitely pending/retry.
   expireOldAiJobs_(queue, rows, index, qi, now);
+  // A digest may have been marked completed before later photos were recovered.
+  // Reopen only its unfinished image step, never the already stored text API call.
+  reopenCompletedAiImageJobs_(ss, queue, rows, index, qi, now, 2);
   let target = null;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -132,6 +135,69 @@ function processNextAiListing(ss, queue, options) {
     return Object.assign({}, result, { listingsCompleted: done.length, listingsTotal: ids.length, queueStatus: finished ? 'completed' : 'pending' });
   }
   return result;
+}
+
+/**
+ * Reconcile completed digests that still contain unfinished listing photos.
+ * Bounded to two reopenings per execution; respects 48h Gmail retention rule.
+ * The existing email_fields and image selection prevent repeating text API work.
+ */
+function reopenCompletedAiImageJobs_(ss, queue, rows, index, qi, now, limit) {
+  const listings=ss.getSheetByName(AI_PIPELINE.listingSheetName);
+  if(!listings||listings.getLastRow()<2)return {reopened:0};
+  const heads=listings.getRange(1,1,1,listings.getLastColumn()).getValues()[0];
+  const idCol=heads.indexOf('Datensatz-ID')+1,jsonCol=heads.indexOf('Bildanalyse JSON')+1;
+  if(!idCol||!jsonCol)return {reopened:0};
+  const listingIds=listings.getRange(2,idCol,listings.getLastRow()-1,1).getValues();
+  const idRows=new Map();
+  for(let i=0;i<listingIds.length;i++){
+    const id=String(listingIds[i][0]||'');
+    if(id)idRows.set(id,i+2);
+  }
+  const max=Math.max(1,Math.min(3,Number(limit)||2));
+  let reopened=0;
+  // Newer mail first. Older than 48h cannot legally re-enter processing.
+  for(let i=rows.length-1;i>=0&&reopened<max;i--){
+    const r=rows[i],rowNo=i+2;
+    if(String(r[qi['Queue Bildstatus']]||'')!=='ready_for_ai'||
+       String(r[index.status]||'')!=='completed')continue;
+    const ts=Date.parse(String(r[qi['Queue Eingang UTC']]||''));
+    if(!Number.isFinite(ts)||ts>now||now-ts>=AI_PIPELINE.maxMailAgeHours*3600000)continue;
+    const done=parseJsonArray_(r[index.doneIds]);
+    if(!done.length)continue;
+    const links=parseJsonArray_(r[qi['Queue Inseratslinks JSON']]);
+    const ids=new Set(links.map(getMailListingId).filter(Boolean));
+    for(const id of done){
+      if(reopened>=max)break;
+      if(!ids.has(id)||!idRows.has(id)||isListingBlacklisted_(ss,id))continue;
+      let data={};
+      try{data=parseAiListingJson_(listings.getRange(idRows.get(id),jsonCol).getValue());}
+      catch(_){continue;}
+      const status=String(data.ai_analysis_status||'').toLowerCase();
+      if(!['pending','processing','no_images'].includes(status))continue;
+      const op=data.ai_pipeline?.api_operation||{};
+      if(op.status==='started'||!data.ai_pipeline?.email_fields)continue;
+      const all=Array.isArray(data.drive_files)?data.drive_files:[];
+      const owned=filterListingDriveFiles_(all,id,ids.size===1).filter(f=>f&&f.file_id);
+      if(!owned.length)continue;
+      const analyzed=new Set(data.analyzed_file_ids||[]);
+      if(!owned.some(f=>!analyzed.has(f.file_id)))continue;
+      const next=done.filter(x=>x!==id);
+      queue.getRange(rowNo,index.doneIds+1).setValue(JSON.stringify(next));
+      queue.getRange(rowNo,index.activeId+1).setValue(id);
+      queue.getRange(rowNo,index.status+1).setValue('pending');
+      queue.getRange(rowNo,index.retryAt+1).clearContent();
+      queue.getRange(rowNo,index.error+1).clearContent();
+      r[index.doneIds]=JSON.stringify(next);
+      r[index.activeId]=id;
+      r[index.status]='pending';
+      reopened++;
+      logImageDiagnostic('ai_image_recovery',{listing_id:id,mail_id:r[qi['Queue Gmail-ID']],
+        status:'reopened',files:owned.length});
+      break; // Leave other IDs in this digest for a subsequent completed pass.
+    }
+  }
+  return {reopened};
 }
 
 function processAiQueueRow_(ss, queue, target, qi, index) {
