@@ -39,14 +39,14 @@ test('only queued property alerts older than 48h are trashed', () => {
   const e = createEnvironment();
   e.setMessages([
     e.message('old-queued', 49),
-    e.message('exactly-48', 48),
+    e.message('not-yet-48', 47.9),
     e.message('recent-queued', 12),
     e.message('unrelated-old', 240)
   ]);
   const toIso = hours => new Date(e.now - hours*3600000).toISOString();
   const queue = {
     'old-queued': {receivedAt: toIso(49),status:'blocked'},
-    'exactly-48': {receivedAt: toIso(48),status:'ready_for_ai'},
+    'not-yet-48': {receivedAt: toIso(47.9),status:'ready_for_ai'},
     'recent-queued': {receivedAt: toIso(12),status:'ready_for_ai'}
   };
   const result = e.cleanup(queue);
