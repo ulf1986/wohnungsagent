@@ -284,8 +284,17 @@ function runGmailImagePipeline() {
           allFiles.map(file => file.source_url)
         );
 
-        const remainingUrls =
-          mailImageUrls.filter(url => !storedUrls.has(url)).slice(0, 1);
+        // At most one lightweight preview per listing in a digest.
+        const previewOwners = new Set();
+        const remainingUrls = mailImageUrls.filter(url => {
+          if (storedUrls.has(url)) return false;
+          const owners = photoOwners(url);
+          const owner = owners.length === 1 ? owners[0] :
+            (propertyIds.length === 1 ? propertyIds[0] : '');
+          if (!owner || previewOwners.has(owner)) return false;
+          previewOwners.add(owner);
+          return true;
+        });
 
         if (remainingUrls.length) {
           const result = saveListingImages(
