@@ -60,21 +60,42 @@ def preliminary_listing_id(url):
     return ""
 
 
+def screened_facts(row):
+    """Use sheet fields first, then strictly validated existing extraction data."""
+    if not row:
+        return {"rent": None, "area": None, "rooms": None}
+    rent, area, rooms = number(text(row, "Miete")), number(text(row, "Fläche")), None
+    try:
+        data = json.loads(text(row, "Bildanalyse JSON") or "{}")
+        extracted = data.get("extracted_fields") or {}
+        email = (data.get("ai_pipeline") or {}).get("email_fields") or {}
+        if rent is None:
+            rent = number(extracted.get("rent_eur", email.get("rent_eur")))
+        if area is None:
+            area = number(extracted.get("area_m2", email.get("area_m2")))
+        rooms = number(extracted.get("rooms", email.get("rooms")))
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return {"rent": rent, "area": area, "rooms": rooms}
+
+
 def hard_excluded(row):
-    """Only reject from known facts; unknown fields require a manual review."""
+    """Reject on explicit evidence; unresolved numbers must never be invented."""
     if not row:
         return False
     if text(row, "Zu löschen").lower() in ("true", "ja", "yes", "1"):
         return True
     if text(row, "Status").lower() in ("ausgeschlossen", "nicht verfügbar"):
         return True
-    rent, area = number(text(row, "Miete")), number(text(row, "Fläche"))
+    facts = screened_facts(row)
+    rent, area, rooms = facts["rent"], facts["area"], facts["rooms"]
     if rent is not None and not 800 <= rent <= 1200:
         return True
     if area is not None and area < 60:
         return True
+    if rooms is not None and rooms < 2:
+        return True
     return False
-
 
 def first_attempt_finished(queue, row):
     """A link alone, or ready_for_ai, is NOT evidence of a screening attempt."""
@@ -181,8 +202,8 @@ def early_candidates(now, seen, current):
                 candidates[listing_id] = {
                     "id": listing_id, "url": str(url),
                     "subject": subject, "received": received,
-                    "rent": number(text(listing, "Miete")) if listing else None,
-                    "area": number(text(listing, "Fläche")) if listing else None,
+                    "rent": screened_facts(listing)["rent"],
+                    "area": screened_facts(listing)["area"],
                 }
     return sorted(candidates.values(), key=lambda item: item["received"], reverse=True)
 
