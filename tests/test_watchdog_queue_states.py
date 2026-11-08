@@ -73,7 +73,7 @@ class QueueMonitoringTests(unittest.TestCase):
                 self.assertNotIn("AI_EXPIRED", [a["code"] for a in alerts])
 
     def test_failed_final_is_one_actionable_incident(self):
-        items = self.inspect([queue(age=120, state="failed_final")])
+        items = self.inspect([queue(age=120, state="failed_final", updated=ago(5))])
         self.assertEqual([a["code"] for a in items], ["AI_FAILED_FINAL"])
 
     def test_no_images_is_terminal_even_if_drive_files_exist(self):
