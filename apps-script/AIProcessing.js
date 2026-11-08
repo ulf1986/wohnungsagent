@@ -693,18 +693,29 @@ function callListingExtraction_(config, source, subject, emailText, url, pageTex
  */
 function recoverQuotedEssential_(text,field) {
   const source=String(text||'');
-  const patterns=field==='rent_eur'
-    ? [/(?:alquiler|renta|precio|miete)\s*[:：]?\s*((?:\d{1,2}[.,]\d{3}|\d{3,5}))\s*€\s*(?:\/\s*mes|mensuales?)?/gi,
-       /\b((?:\d{1,2}[.,]\d{3}|\d{3,5}))\s*€\s*(?:\/\s*mes|al\s*mes|mensuales?)\b/gi]
-    : [/(?:superficie|superficie\s+construida|fläche|tamaño|size|area)\s*[:：]?\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2|etros\s+cuadrados)/gi,
-       /\b(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2)\b/gi];
-  const found=new Map();
-  for(const re of patterns) for(const hit of source.matchAll(re)){
-    const raw=hit[1];const value=Number(raw.replace(/\.(?=\d{3}(?:\D|$))/g,'').replace(',','.'));
-    if(!Number.isFinite(value)|| (field==='rent_eur' ? value<350||value>4000 : value<20||value>350))continue;
-    if(!found.has(value))found.set(value,hit[0]);
+  // Prefer explicitly labelled floor area over unlabelled dimensions of
+  // recommended nearby properties or room sizes on the same page.
+  const strong=field==='area_m2'
+    ? [/(?:superficie(?:\\s+(?:construida|útil))?|wohnfläche|fläche|tamaño|area|área)\\s*[:：-]?\\s*(\\d{2,3}(?:[.,]\\d{1,2})?)\\s*m(?:²|2|etros\\s+cuadrados)/gi,
+       /\\b(\\d{2,3}(?:[.,]\\d{1,2})?)\\s*m(?:²|2)\\s*(?:construidos?|útiles?|de superficie)\\b/gi]
+    : [/(?:alquiler|renta|precio|miete)\\s*[:：]?\\s*((?:\\d{1,2}[.,]\\d{3}|\\d{3,5}))\\s*€\\s*(?:\\/\\s*mes|mensuales?)?/gi];
+  const weak=field==='rent_eur'
+    ? [/\\b((?:\\d{1,2}[.,]\\d{3}|\\d{3,5}))\\s*€\\s*(?:\\/\\s*mes|al\\s*mes|mensuales?)\\b/gi]
+    : [/\\b(\\d{2,3}(?:[.,]\\d{1,2})?)\\s*m(?:²|2)\\b/gi];
+  function unique(patterns) {
+    const found=new Map();
+    for(const re of patterns) for(const hit of source.matchAll(re)) {
+      const val=Number(hit[1].replace(/\\.(?=\\d{3}(?:\\D|$))/g,'').replace(',','.'));
+      if(!Number.isFinite(val)||(field==='rent_eur'?(val<350||val>4000):(val<20||val>350)))continue;
+      if(!found.has(val))found.set(val,hit[0]);
+    }
+    return found.size===1?{value:[...found.keys()][0],quote:[...found.values()][0]}:null;
   }
-  return found.size===1?{value:[...found.keys()][0],quote:[...found.values()][0]}:null;
+  const labelled=unique(strong);
+  if(labelled)return labelled;
+  // Contradictory labelled figures must not be bypassed via a weak match.
+  if(strong.some(re=>[...source.matchAll(re)].length))return null;
+  return unique(weak);
 }
 
 function normalizeListingFacts_(raw,source,texts,fieldTypes) {
