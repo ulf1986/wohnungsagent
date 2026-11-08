@@ -10,7 +10,9 @@ test('listing worker completes after text extraction, before image review', () =
   const migrate = active.indexOf('// Migration: finish old text-extracted jobs');
   const image = active.indexOf('const fileList = data.drive_files.filter(');
   assert.ok(migrate > 0 && image > migrate);
-  assert.match(active.slice(0, image), /finalizeAiListing_\(sheet, listingRow, cols, data, emailFields\);\s*return \{ status: 'completed', listingId \};/);
+  assert.match(active.slice(0, image), /const finalized = finalizeAiListing_\(sheet, listingRow, cols, data, emailFields\);/);
+  assert.match(active.slice(0, image), /if \(finalized && finalized.status === 'blocked'\)/);
+  assert.match(active.slice(0, image), /return \{ status: 'completed', listingId \};/);
   assert.match(active, /finalizeAiListing_\(sheet, listingRow, cols, data, checked.fields\)/);
   assert.doesNotMatch(code.slice(code.indexOf('function processNextAiListing('), code.indexOf('function reopenCompletedAiImageJobs_(')), /\breopenCompletedAiImageJobs_\(/);
 });
