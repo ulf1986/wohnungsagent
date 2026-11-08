@@ -357,7 +357,10 @@ def main():
         alerts.append(problem("ACTIONS_MONITOR_ERROR", "actions", str(error)[:160]))
     print("Watchdog: ", len(alerts), "aktive Probleme:",
           ", ".join(a["code"] for a in alerts[:20]))
-    return 1 if handle_incidents(alerts, now, known_mail_ids) else 0
+    # Incidents are tracked and notified by handle_incidents. A detected issue
+    # must not fail the GitHub workflow and generate another failure email.
+    handle_incidents(alerts, now, known_mail_ids)
+    return 0
 
 
 if __name__ == "__main__":
