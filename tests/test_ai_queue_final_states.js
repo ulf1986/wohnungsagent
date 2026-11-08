@@ -41,7 +41,7 @@ function mockSheet() {
   };
 }
 
-test('three definite failures become failed_final without a fourth API retry', () => {
+test('two definite failures become failed_final without a third AI request', () => {
   const sheet = mockSheet();
   const statuses = [];
   for (let k = 0; k < 3; k++) {
@@ -49,10 +49,10 @@ test('three definite failures become failed_final without a fourth API retry', (
     statuses.push(result.status);
     assert.equal(result.attempts, k + 1);
   }
-  assert.deepEqual(statuses, ['retry', 'retry', 'failed_final']);
+  assert.deepEqual(statuses, ['retry', 'failed_final', 'failed_final']);
   assert.equal(sheet.value(2, ix.status + 1), 'failed_final');
   assert.equal(sheet.value(2, ix.retryAt + 1), '');
-  assert.match(sheet.value(2, ix.error + 1), /Endgültig nach 3 Fehlversuchen/);
+  assert.match(sheet.value(2, ix.error + 1), /Endgültig nach 2 Fehlversuchen/);
 });
 
 test('expiry affects only old unfinished AI jobs, never uncertain operations', () => {
