@@ -8,13 +8,17 @@
  * - Drive.gs
  * - IdealistaGalerie.gs
  *
- * Gmail lesen; nach gesicherter Queue-Übernahme Suchauftrags-Mails in Papierkorb verschieben.
+ * Gmail lesen; Suchauftrags-Mails erst 48 Stunden nach Eingang in den Papierkorb verschieben.
  * Keine E-Mails verschicken.
  */
 
 const MAIL_IMPORT = {
   label: 'Wohnungssuche/Suchaufträge',
-  trashAfterQueueReady: true,
+  retentionHours: 48,
+  cleanupIntervalMinutes: 60,
+  cleanupMaxMessagesPerRun: 35,
+  cleanupMaxThreadsPerSearch: 100,
+  cleanupCursorKey: 'WOHNUNGSAGENT_GMAIL_RETENTION_LAST_RUN_UTC',
   sheetName: 'Verarbeitung',
 
   lookbackDays: 2,
@@ -178,7 +182,7 @@ function runGmailImagePipeline() {
             'ImmoScout-Import deaktiviert', new Date().toISOString());
           stats.blocked++;
           logImageDiagnostic('mail_skip',{status:'blocked',reason:'immoscout_disabled'});
-          trashQueuedSearchMail_(mail, 'blocked');
+          // Aufbewahrung 48 Stunden, danach zeitgesteuerte Bereinigung.
           continue;
         }
         setMailQueueStatus(
@@ -210,7 +214,7 @@ function runGmailImagePipeline() {
             'Sperrliste: ' + blockedInMail.join(', '), new Date().toISOString());
           stats.blocked++;
           waMonitorMail_(mailId, 'blocked', 'Sperrliste', propertyIds);
-          trashQueuedSearchMail_(mail, 'blocked');
+          // Aufbewahrung 48 Stunden, danach zeitgesteuerte Bereinigung.
           continue;
         }
         // Persist source links before images or AI. This enables an early
@@ -419,7 +423,7 @@ function runGmailImagePipeline() {
 
         if (status === 'ready_for_ai') {
           stats.completed++;
-          trashQueuedSearchMail_(mail, status);
+          // Aufbewahrung 48 Stunden, danach zeitgesteuerte Bereinigung.
         } else if (status === 'no_images') {
           stats.no_images++;
         } else if (
@@ -463,6 +467,16 @@ function runGmailImagePipeline() {
     }
     if (stats.candidates && stats.processed === 0 && stats.blocked === 0)
       waMonitorIssue_('Gmail-Kandidaten vorhanden, aber keine Mail verarbeitet oder gesperrt');
+    // Clean only already-queued search notifications older than 48h.
+    // Once hourly to keep Gmail API usage low.
+    try {
+      cleanupQueuedSearchMailsAfterRetention_(existing);
+    } catch (error) {
+      logImageDiagnostic('gmail_retention_cleanup', {
+        level: 'WARN', status: 'failed', error: String(error.message || error)
+      });
+      console.warn('Gmail-Aufbewahrung: ' + error.message);
+    }
     waMonitorStats_(stats);
     console.log('Gmail: ' + JSON.stringify(stats));
     if (imageDiagnosticRun) {
@@ -683,18 +697,61 @@ function readPreviouslyProcessedMailIds(sheet) {
  *
  * Calling this requires the pipeline-wide ScriptLock.
  */
-/** Never trash retry or unfinished messages. Queue and image metadata are saved first. */
-function trashQueuedSearchMail_(mail, status) {
-  if (!MAIL_IMPORT.trashAfterQueueReady ||
-      !['ready_for_ai','blocked'].includes(status)) return false;
-  try {
-    mail.moveToTrash();
-    logImageDiagnostic('gmail_cleanup', {status:'trashed',mail_id:mail.getId(),reason:status});
-    return true;
-  } catch(error) {
-    logImageDiagnostic('gmail_cleanup', {status:'failed',level:'WARN',mail_id:mail.getId(),error:String(error.message||error)});
-    return false;
+/**
+ * Delay Gmail cleanup until at least 48 hours after arrival, even for
+ * already-processed, blocked or duplicate search results.
+ *
+ * Uses only IDs durably recorded in the import queue, never touches unrelated
+ * messages. Bounded to two hourly Gmail searches and 35 moves per execution.
+ * If cleanup fails, the timestamp is not advanced so the next run can retry.
+ */
+function cleanupQueuedSearchMailsAfterRetention_(existing) {
+  const now = Date.now();
+  const props = PropertiesService.getScriptProperties();
+  const last = Date.parse(String(props.getProperty(MAIL_IMPORT.cleanupCursorKey) || ''));
+  if (Number.isFinite(last) &&
+      now - last < MAIL_IMPORT.cleanupIntervalMinutes * 60000)
+    return {status: 'not_due', moved: 0};
+  const cutoff = now - MAIL_IMPORT.retentionHours * 3600000;
+  const cutoffEpoch = Math.floor(cutoff / 1000);
+  const ready = new Set(Object.keys(existing || {}).filter(id => {
+    const entry = existing[id] || {};
+    const received = Date.parse(String(entry.receivedAt || ''));
+    return Number.isFinite(received) && received < cutoff;
+  }));
+  if (!ready.size) {
+    props.setProperty(MAIL_IMPORT.cleanupCursorKey, new Date(now).toISOString());
+    return {status:'nothing_due',moved:0};
   }
+  const queries = [
+    'label:"' + MAIL_IMPORT.label.replace(/"/g,'') + '" before:' + cutoffEpoch + ' -in:trash',
+    'from:(fotocasa.es) before:' + cutoffEpoch + ' -in:trash'
+  ];
+  let moved = 0;
+  const seen = new Set();
+  for (const query of queries) {
+    const threads = GmailApp.search(query, 0, MAIL_IMPORT.cleanupMaxThreadsPerSearch);
+    for (const thread of threads) {
+      for (const mail of thread.getMessages()) {
+        if (moved >= MAIL_IMPORT.cleanupMaxMessagesPerRun) break;
+        const id = mail.getId();
+        if (seen.has(id) || !ready.has(id) || mail.getDate().getTime() >= cutoff) continue;
+        seen.add(id);
+        if (typeof mail.isInTrash === 'function' && mail.isInTrash()) continue;
+        mail.moveToTrash();
+        moved++;
+      }
+      if (moved >= MAIL_IMPORT.cleanupMaxMessagesPerRun) break;
+    }
+    if (moved >= MAIL_IMPORT.cleanupMaxMessagesPerRun) break;
+  }
+  // A capped scan continues next trigger instead of waiting an hour.
+  if (moved < MAIL_IMPORT.cleanupMaxMessagesPerRun)
+    props.setProperty(MAIL_IMPORT.cleanupCursorKey, new Date(now).toISOString());
+  logImageDiagnostic('gmail_retention_cleanup', {
+    status: 'completed', count: moved, reason: 'older_than_48_hours'
+  });
+  return {status: 'completed', moved};
 }
 
 function collectMailCandidates_(existing, processed) {
