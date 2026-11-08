@@ -32,6 +32,105 @@ def cells():
     headers = [str(h).strip() for h in rows[0]]
     return [dict(zip(headers, row)) for row in rows[1:]]
 
+def sheet_matrix(range_a1):
+    """Small read-only sheet lookup. Never fetch email bodies just to send links."""
+    encoded = urllib.parse.quote(range_a1, safe="")
+    return request_json(
+        f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/{encoded}",
+        headers={"Authorization": "Bearer " + google_token()}).get("values", [])
+
+
+def preliminary_listing_id(url):
+    """IDs are always portal-qualified. Never equate numeric IDs across sites."""
+    parsed = urllib.parse.urlsplit(str(url or ""))
+    if parsed.scheme != "https":
+        return ""
+    host = (parsed.hostname or "").lower()
+    path = parsed.path
+    patterns = (
+        ("idealista", r"(^|\.)idealista\.com$", r"/inmueble/(\d+)"),
+        ("yaencontre", r"(^|\.)yaencontre\.com$", r"/inmueble-\d+-(\d+)"),
+        ("fotocasa", r"(^|\.)fotocasa\.es$", r"/(\d+)(?:/d)?/?$"),
+        ("pisos", r"(^|\.)pisos\.com$", r"-(\d{6,})_"),
+        ("milanuncios", r"(^|\.)milanuncios\.com$", r"(\d{6,})\.htm"),
+    )
+    for provider, host_pat, path_pat in patterns:
+        if re.search(host_pat, host) and (match := re.search(path_pat, path)):
+            return f"{provider}:{match.group(1) if provider == 'idealista' else match.group(1)}"
+    return ""
+
+
+def early_candidates(now, seen, current):
+    """Recently received queued links get one provisional message before AI.
+
+    Queue links are durably saved immediately after extraction in Apps Script.
+    A short lookback prevents historical notifications after deployment.
+    """
+    headers = sheet_matrix("'Verarbeitung'!H1:J2000")
+    link_col = sheet_matrix("'Verarbeitung'!L1:L2000")
+    blocked = sheet_matrix("'Sperrliste'!A2:A2000")
+    forbidden = {str(row[0]).strip().lower() for row in blocked if row and row[0]}
+    candidates = {}
+    for index, row in enumerate(headers[1:], 1):
+        if len(row) < 2 or index >= len(link_col):
+            continue
+        received = parse_time(str(row[1]))
+        if not received:
+            continue
+        age = (now - received).total_seconds()
+        if not 0 <= age <= 3 * 3600:
+            continue
+        try:
+            links = json.loads(link_col[index][0]) if link_col[index] else []
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(links, list):
+            continue
+        subject = str(row[2])[:150] if len(row) > 2 else ""
+        for url in links:
+            listing_id = preliminary_listing_id(url)
+            if (not listing_id or listing_id in seen or
+                    listing_id.lower() in forbidden):
+                continue
+            if listing_id in current:
+                row_now = current[listing_id]
+                if text(row_now, "Zu löschen").lower() in ("true", "ja", "yes", "1"):
+                    continue
+                if text(row_now, "Status").lower() == "ausgeschlossen":
+                    continue
+            if listing_id not in candidates or received > candidates[listing_id]["received"]:
+                candidates[listing_id] = {"id": listing_id, "url": str(url),
+                                          "subject": subject, "received": received}
+    return sorted(candidates.values(), key=lambda item: item["received"], reverse=True)
+
+
+def send_early(candidate):
+    """Link only. No OpenAI, no image fetch, no unverified quality claims."""
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        raise RuntimeError("Telegram Secrets fehlen")
+    url = candidate["url"]
+    parsed = urllib.parse.urlsplit(url)
+    query = [(k, v) for k, v in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+             if not k.startswith("utm_")]
+    clean = urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
+    msg = "\n".join([
+        "🔎 <b>Neue Wohnungsanzeige: Link vor der KI-Auswertung</b>",
+        html.escape(candidate["id"]),
+        html.escape(candidate["subject"][:100]),
+        "",
+        "Angaben und Eignung noch nicht geprüft. Du kannst die Anzeige bereits ansehen.",
+        f'<a href="{html.escape(clean, quote=True)}">Inserat jetzt öffnen</a>'
+    ])
+    result = request_json(f"https://api.telegram.org/bot{token}/sendMessage",
+                          method="POST",
+                          body={"chat_id": chat, "parse_mode": "HTML",
+                                "disable_notification": False,
+                                "disable_web_page_preview": True, "text": msg})
+    if not result.get("ok"):
+        raise RuntimeError("Telegram hat die frühe Link-Nachricht abgelehnt")
+
+
 def text(row, name):
     return str(row.get(name, "") or "").strip()
 
@@ -178,16 +277,28 @@ def main():
         issue = save(None, seen)
         print("Versandhistorie erstmalig initialisiert.")
 
+    current = {text(r, "Datensatz-ID"): r for r in listings if text(r, "Datensatz-ID")}
+    delivered = 0
+    preliminary = early_candidates(now, seen, current)
+    for item in preliminary[:MAX_PER_RUN]:
+        send_early(item)
+        seen.add(item["id"])
+        save(issue, seen)
+        delivered += 1
+        print("Telegram-Sofortlink gesendet für", item["id"])
+
     pending = [r for r in listings if eligible(r) and
                text(r, "Datensatz-ID") not in seen]
     pending.sort(key=lambda r: (listing_time(r) or now, text(r, "Datensatz-ID")))
-    for row in pending[:MAX_PER_RUN]:
+    for row in pending[:max(0, MAX_PER_RUN - delivered)]:
         listing_id = text(row, "Datensatz-ID")
         send(row)
         seen.add(listing_id)
         save(issue, seen)
+        delivered += 1
         print("Telegram-Nachricht gesendet für", listing_id)
-    print(f"Geprüfte Anzeigen: {len(listings)}; ausstehend: {max(0,len(pending)-MAX_PER_RUN)}.")
+    print(f"Geprüfte Anzeigen: {len(listings)}; Sofortlinks: {len(preliminary)}; "
+          f"offene vollständige Bewertungen: {len(pending)}; gesendet: {delivered}.")
     return 0
 
 if __name__ == "__main__":
