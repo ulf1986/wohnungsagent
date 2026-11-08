@@ -81,6 +81,8 @@ function runGmailImagePipeline() {
       runImageDiagnosticStage('duplicate_text_candidates', () => detectTextDuplicateCandidates_(ss, 10));
     runImageDiagnosticStage('duplicate_reconcile', () => reconcileExistingDuplicates_(ss));
     runImageDiagnosticStage('rescore_existing', () => recalculateExistingListingScores_(ss, 10));
+    if (typeof auditProviderDataQuality_ === 'function')
+      runImageDiagnosticStage('provider_quality', () => auditProviderDataQuality_(ss));
     // Expensive recovery is deliberately excluded from the 5-minute Gmail trigger.
     // Run recoverMissingListingEssentials_ separately after clearing the mail backlog.
 
