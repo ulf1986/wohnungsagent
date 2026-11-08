@@ -50,8 +50,9 @@ function setup(listings=[]){
     }
     return {width:w,height:h,data:pix};
   }
+  const settings=new Map();
   const ctx=vm.createContext({
-    console,Uint8Array,SpreadsheetApp:{flush(){},InterpolationType:{NUMBER:'NUMBER'},newConditionalFormatRule:()=>({
+    console,Uint8Array,PropertiesService:{getScriptProperties:()=>({getProperty:k=>settings.get(k)||null,setProperty:(k,v)=>settings.set(k,String(v))})},SpreadsheetApp:{flush(){},InterpolationType:{NUMBER:'NUMBER'},newConditionalFormatRule:()=>({
       setGradientMinpointWithValue(){return this;},setGradientMidpointWithValue(){return this;},
       setGradientMaxpointWithValue(){return this;},setRanges(){return this;},build(){return this;}})},
     readMailImageBlacklist:()=>new Set(block.rows.slice(1).map(r=>String(r[0]).toLowerCase())),
@@ -84,6 +85,36 @@ test('image matching requires two different photo matches before suppressing ano
   const registry=ctx.readDuplicateRegistry_(ss.getSheetByName('Duplikate'));
   assert.equal(registry.find(x=>x.id==='fotocasa:9').canonical,'idealista:1');
 });
+test('unsupported listing with no photos can be retried after pictures arrive',()=>{
+  const row=listing('yaencontre:100',[]);
+  const {ctx,ss,sheet}=setup([row]);
+  const registry=ctx.ensureDuplicateRegistry_(ss);
+  ctx.saveDuplicateRecord_(registry,'yaencontre:100','yaencontre:100','unsupported',[],[{id:'yaencontre:100',url:'https://yaencontre.test/100'}],'Keine Fotos');
+  assert.deepEqual(plain(ctx.backfillDuplicateRegistry_(ss,6)),{added:0,matched:0});
+  const data=JSON.parse(sheet.rows[1][header.indexOf('Bildanalyse JSON')]);
+  data.drive_files=[{file_id:'first-a',listing_id:'yaencontre:100'}];
+  sheet.rows[1][header.indexOf('Bildanalyse JSON')]=JSON.stringify(data);
+  assert.deepEqual(plain(ctx.backfillDuplicateRegistry_(ss,6)),{added:1,matched:0});
+  assert.equal(ctx.readDuplicateRegistry_(registry)[0].status,'primary');
+  assert.equal(ctx.readDuplicateRegistry_(registry)[0].photos.length,1);
+});
+
+test('text duplicate comparison requires verified address and two corroborating fields',()=>{
+  const {ctx}=setup();
+  const a={address:'calle uno 5 malaga',area:70,rent:1000,rooms:2};
+  assert.equal(ctx.duplicateTextCandidate_(a,{...a,area:71}),true);
+  assert.equal(ctx.duplicateTextCandidate_(a,{...a,address:'calle dos 5 malaga'}),false);
+  assert.equal(ctx.duplicateTextCandidate_(a,{...a,area:null,rent:null}),false);
+  assert.equal(ctx.duplicateTextCandidate_(a,{...a,rent:1100}),false);
+});
+
+test('matching numeric IDs across portals do not count as duplicate evidence',()=>{
+  const {ctx}=setup();
+  const first={address:'',area:80,rent:1050,rooms:2};
+  const second={address:'',area:80,rent:1050,rooms:2};
+  assert.equal(ctx.duplicateTextCandidate_(first,second),false);
+});
+
 test('reconciliation retains source aliases and removes less complete duplicate rows only',()=>{
   const {ctx,ss,sheet}=setup([
     listing('idealista:1',['first-a','second-a'],{rent:1200,area:80}),
