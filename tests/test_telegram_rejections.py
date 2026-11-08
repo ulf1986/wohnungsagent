@@ -38,8 +38,21 @@ class RejectionTests(unittest.TestCase):
         msg = mod.message({"id": "pisos:12345678", "mail_id": "abc",
                            "reason": "Ausschluss: <60 m² & viel zu klein"})
         self.assertIn("&lt;60 m² &amp;", msg)
-        self.assertIn("#all/abc", msg)
+        self.assertIn("Inserat-Link nicht verfügbar", msg)
         self.assertIn("<b>Wohnung ausgeschlossen</b>", msg)
+
+    def test_listing_url_from_same_mail_and_property_id(self):
+        queue = [["Queue Gmail-ID", "Queue Eingang UTC", "Queue Betreff",
+                  "Queue Originaltext", "Queue Inseratslinks JSON"],
+                 ["abc", "", "", "",
+                  '["https://www.yaencontre.com/alquiler/piso/inmueble-53076-112880475?utm_source=mail"]']]
+        url = mod.find_listing_url("yaencontre:112880475", "abc", queue)
+        self.assertEqual(url, "https://www.yaencontre.com/alquiler/piso/inmueble-53076-112880475")
+        self.assertEqual(mod.find_listing_url("yaencontre:112880475", "wrong", queue), "")
+        msg = mod.message({"id": "yaencontre:112880475", "mail_id": "abc",
+                           "reason": "Ausschluss: zu klein", "listing_url": url})
+        self.assertIn('href="' + url + '"', msg)
+        self.assertNotIn("mail.google.com", msg)
 
     def test_first_activation_does_not_send_old_rejections(self):
         rows = [HEADER,
