@@ -97,7 +97,7 @@ def hard_excluded(row):
         return True
     return False
 
-def first_attempt_finished(queue, row):
+def first_attempt_finished(queue, row, listing_id):
     """A link alone, or ready_for_ai, is NOT evidence of a screening attempt."""
     if row:
         try:
@@ -112,7 +112,9 @@ def first_attempt_finished(queue, row):
             pass
     ai_state = str(queue.get("ai_status") or "").lower()
     attempts = number(queue.get("ai_attempts"))
-    return (ai_state in ("retry", "failed_final", "needs_review", "expired") and
+    owner = queue.get("active_id") or queue.get("last_id")
+    return (owner == listing_id and
+            ai_state in ("retry", "failed_final", "needs_review", "expired") and
             ((attempts is not None and attempts >= 1) or
              bool(queue.get("ai_error"))))
 
@@ -125,7 +127,7 @@ def early_candidates(now, seen, current):
     """
     headers = sheet_matrix("'Verarbeitung'!H1:J2000")
     link_col = sheet_matrix("'Verarbeitung'!L1:L2000")
-    import_states = sheet_matrix("'Verarbeitung'!O1:W2000")
+    import_states = sheet_matrix("'Verarbeitung'!O1:Y2000")
     blocked = sheet_matrix("'Sperrliste'!A2:A2000")
     registry = sheet_matrix("'Duplikate'!A2:C2000")
     decisions = sheet_matrix("'Entscheidungen'!A1:H10000")
@@ -157,7 +159,7 @@ def early_candidates(now, seen, current):
             continue
         if not isinstance(links, list):
             continue
-        # O:W maps mail status and R/S/W to indices 3/4/8.
+        # O:Y maps mail status, AI status R, attempts W and active ID Y.
         state = import_states[index] if index < len(import_states) else []
         queue = {
             "mail_status": str(state[0]).lower() if state else "",
@@ -165,6 +167,8 @@ def early_candidates(now, seen, current):
             "ai_status": str(state[3]).lower() if len(state) > 3 else "",
             "ai_error": str(state[4]) if len(state) > 4 else "",
             "ai_attempts": state[8] if len(state) > 8 else "",
+            "last_id": str(state[6]) if len(state) > 6 else "",
+            "active_id": str(state[10]) if len(state) > 10 else "",
         }
         subject = str(row[2])[:150] if len(row) > 2 else ""
         for url in links:
@@ -186,10 +190,12 @@ def early_candidates(now, seen, current):
             if listing and text(listing, "KI-Bewertung").lower() == "abgeschlossen":
                 continue
             # We do not notify merely because a mail has entered the queue.
-            attempted = first_attempt_finished(queue, listing)
+            attempted = first_attempt_finished(queue, listing, listing_id)
             # Import failed before reaching the text worker: allow fallback,
             # but only after the first import failure was persisted.
-            import_failed = (queue["mail_status"] in
+            import_failed = (len({preliminary_listing_id(link) for link in links
+                                  if preliminary_listing_id(link)}) == 1 and
+                             queue["mail_status"] in
                              ("retry", "gallery_unavailable", "no_images") and
                              bool(queue["mail_error"]))
             if not attempted and not import_failed:
