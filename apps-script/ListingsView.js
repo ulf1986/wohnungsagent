@@ -10,13 +10,13 @@ const LISTING_COMPACT_VIEW = Object.freeze({
   visible: [
     'Zu löschen',
     'Vorschaubild',
+    'Titel',
     'Miete',
     'Fläche',
     'Miete pro m²',
     'Mietart / Laufzeit',
     'Mietprüfung',
-    'Einschränkungen',
-    'Anzeigenlink'
+    'Einschränkungen'
   ]
 });
 
