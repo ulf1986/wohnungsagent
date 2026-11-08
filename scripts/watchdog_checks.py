@@ -126,7 +126,7 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
         if ai_status in TERMINAL_AI:
             # These are durable end states. Report final failures as one incident,
             # not as an endlessly stalled retry.
-            if ai_status == "failed_final":
+            if ai_status == "failed_final" and last_step is not None and last_step < 24 * 60:
                 alerts.append(problem("AI_FAILED_FINAL", identity,
                                       f"{identity}: {error[:130]}", "warning"))
             continue
