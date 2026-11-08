@@ -69,7 +69,7 @@ function processNextAiListing(ss, queue, options) {
   expireOldAiJobs_(queue, rows, index, qi, now);
   // A digest may have been marked completed before later photos were recovered.
   // Reopen only its unfinished image step, never the already stored text API call.
-  reopenCompletedAiImageJobs_(ss, queue, rows, index, qi, now, 2);
+  // Text-only mode: never reopen completed listings for image reviews.
   let target = null;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -290,7 +290,8 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       blacklistUnavailableListing_(ss,sheet,cols,listingId,listingUrl,data.ai_pipeline.page_check.reason);
       return {status:'unavailable',listingId};
     }
-    const config = getOpenAiConfig_();
+    // Only text extraction uses OpenAI. Photos remain as previews, not AI inputs.
+    const config = data.ai_pipeline.email_fields ? null : getOpenAiConfig_();
 
     if (!data.ai_pipeline.email_fields) {
       // Seite vor der gemeinsamen Extraktion abrufen; Ausfall blockiert die Mail nicht.
@@ -327,12 +328,12 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       data.ai_pipeline.email_fields = checked.emailFields;
       data.ai_pipeline.email_missing = emailResult.missing_fields;
       data.ai_pipeline.missing_fields = emailResult.missing_fields;
-      populateListingLocation_(checked.fields, data);
+      // Location and geocoding are not required for lightweight listings.
       data.ai_pipeline.field_provenance = emailResult.field_provenance || [];
       data.ai_pipeline.rejected_facts = emailResult.rejected_facts || [];
       data.ai_pipeline.source_conflicts = checked.conflicts;
       data.ai_pipeline.provenance_version = 1;
-      data.ai_pipeline.stage = 'images';
+      data.ai_pipeline.stage = 'completed';
       data.ai_pipeline.updated_at = new Date().toISOString();
       completeAiApiOperation_(data);
       applyListingFields_(sheet, listingRow, cols, checked.fields, 'email_and_page');
@@ -353,11 +354,17 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       // Never notify on unknown size/rent or a rejected listing.
       if (eligibility.status !== 'Ausgeschlossen')
         notifyNewListing_(sheet, listingRow, cols, data, checked.fields, eligibility);
+      finalizeAiListing_(sheet, listingRow, cols, data, checked.fields);
       setAiQueueState_(queue, rowNo, index, 'pending', '', '');
-      return { status: 'text_extracted', listingId };
+      return { status: 'completed', listingId };
     }
 
     const emailFields = data.ai_pipeline.email_fields;
+    // Migration: finish old text-extracted jobs without any image review API call.
+    data.ai_pipeline.stage = 'completed';
+    data.ai_pipeline.updated_at = new Date().toISOString();
+    finalizeAiListing_(sheet, listingRow, cols, data, emailFields);
+    return { status: 'completed', listingId };
     const needsPage = listingPageMissingFields_(emailFields);
     if (!data.ai_pipeline.page_checked && needsPage.length) {
       const page = fetchListingPageForProvider_(listingUrl);
@@ -935,7 +942,7 @@ function compactListingSummary_(value) {
 function finalizeAiListing_(sheet, row, cols, data, emailFields) {
   const image = data.image_review || {};
   const merged = mergeMissingOnly_(emailFields || {}, data.ai_pipeline.page_fields || {});
-  populateListingLocation_(merged,data);
+  // No geocoding in text-only mode.
   const score = calculateListingScore_(merged, image);
   const eligibility = assessListingEligibility_(merged, data);
   const rentPoints = score.priceScore, imagePoints = score.imagePoints;
