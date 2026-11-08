@@ -196,7 +196,7 @@ function runGmailImagePipeline() {
         const allMailImageUrls = extractPropertyImageUrls(html);
         const linkedImages = [
           ...extractPisosMailImages(html),
-          ...extractImmoScoutMailImages(html),
+          ...extractYaencontreMailImages(html),
           ...extractMilanunciosMailImages(html)
         ];
         const photoOwners = url => [...new Set(linkedImages
@@ -204,7 +204,7 @@ function runGmailImagePipeline() {
           .map(image => image.listing_id).filter(Boolean))];
         const isLinkedPhoto = url =>
           isPisosPropertyImageUrl(url) ||
-          isImmoScoutPropertyImageUrl(url) ||
+          isYaencontrePropertyImageUrl(url) ||
           isMilanunciosPropertyImageUrl(url);
         const ambiguousPhotos = allMailImageUrls.filter(url => photoOwners(url).length > 1);
         // In Sammelmails ausschließlich eindeutig einem nicht gesperrten
@@ -223,7 +223,7 @@ function runGmailImagePipeline() {
           const direct = file.listing_id || getMailListingId(file.listing_url || '');
           if (direct) return direct;
           const match = String(file.name || '').toLowerCase().match(
-            /^(idealista|fotocasa|yaencontre|pisos|immoscout|milanuncios)_(\d+)_/
+            /^(idealista|fotocasa|yaencontre|pisos|milanuncios)_(\d+)_/
           );
           return match ? match[1] + ':' + match[2] : '';
         };
@@ -344,7 +344,7 @@ function runGmailImagePipeline() {
         // Verlinkte Fotos nur freigeben, wenn ihr Link eine eindeutige ID liefert.
         for (const file of allFiles) {
           if (!isPisosPropertyImageUrl(file.source_url) &&
-              !isImmoScoutPropertyImageUrl(file.source_url) &&
+              !isYaencontrePropertyImageUrl(file.source_url) &&
               !isMilanunciosPropertyImageUrl(file.source_url)) continue;
           const owners = [...new Set(linkedImages
             .filter(image => image.source_url === file.source_url)
@@ -948,8 +948,6 @@ function extractPropertyLinks(html, plain) {
       'idealista.com',
       'yaencontre.com',
       'pisos.com',
-      'immobilienscout24.de',
-      'push.search.is24.de',
       'milanuncios.com'
     ].some(domain =>
       host === domain ||
@@ -962,13 +960,6 @@ function extractPropertyLinks(html, plain) {
 
     if (host === 'milanuncios.com' || host.endsWith('.milanuncios.com')) {
       const listing = getMilanunciosListing(url);
-      if (listing) result.add(listing.url);
-      continue;
-    }
-
-    if (host === 'immobilienscout24.de' || host.endsWith('.immobilienscout24.de') ||
-        host === 'push.search.is24.de') {
-      const listing = getImmoScoutListing(url);
       if (listing) result.add(listing.url);
       continue;
     }
@@ -1007,7 +998,7 @@ function extractIdealistaListingId(url) {
  * Bild-URLs aus dem E-Mail-HTML.
  */
 function isPropertyImageUrl(url) {
-  if (isPisosPropertyImageUrl(url) || isImmoScoutPropertyImageUrl(url) ||
+  if (isPisosPropertyImageUrl(url) || isYaencontrePropertyImageUrl(url) ||
       isMilanunciosPropertyImageUrl(url)) return true;
   const match = String(url || '').match(/^https:\/\/([^\/?#]+)(\/[^?#]*)/i);
   if (!match) return false;
@@ -1064,7 +1055,7 @@ function extractPropertyImageUrls(html) {
 
   // Fotos dieser Portale benötigen den Inseratslink im umschließenden Bildblock.
   for (const image of [
-    ...extractPisosMailImages(html), ...extractImmoScoutMailImages(html),
+    ...extractPisosMailImages(html), ...extractYaencontreMailImages(html),
     ...extractMilanunciosMailImages(html)
   ]) {
     result.add(image.source_url);
@@ -1107,8 +1098,6 @@ function readMailImageBlacklist(ss) {
 function getMailListingId(url) {
   const milan = getMilanunciosListing(url);
   if (milan) return milan.listing_id;
-  const immoscout = getImmoScoutListing(url);
-  if (immoscout) return immoscout.listing_id;
   const pisos = getPisosListing(url);
   if (pisos) return pisos.listing_id;
   const value = String(url || '');
