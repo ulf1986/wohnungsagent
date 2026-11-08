@@ -9,7 +9,7 @@ import re
 
 UTC = dt.timezone.utc
 TERMINAL_MAIL = {"blocked", "duplicate", "completed"}
-TERMINAL_AI = {"completed", "duplicate", "blocked", "unavailable"}
+TERMINAL_AI = {"completed", "duplicate", "blocked", "unavailable", "failed_final", "expired"}
 MONITORING_START = dt.datetime(2026, 11, 6, tzinfo=UTC)
 # No expiry for unresolved work created after monitoring activation.
 
@@ -124,6 +124,11 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
                                   f"{identity}: ungeklärte KI-Operation; {error[:120]}"))
             continue
         if ai_status in TERMINAL_AI:
+            # These are durable end states. Report final failures as one incident,
+            # not as an endlessly stalled retry.
+            if ai_status == "failed_final":
+                alerts.append(problem("AI_FAILED_FINAL", identity,
+                                      f"{identity}: {error[:130]}", "warning"))
             continue
         if "429" in error and (attempts >= 2 or age > 60):
             alerts.append(problem("AI_HTTP_429", identity,
@@ -136,13 +141,17 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
                                   f"{identity}: KI-API dauerhaft gestört ({attempts} Versuche): {error[:110]}"))
         # During an explicit retry wait the item is not stalled. The first
         # stalled alert follows when retryAt is overdue or progress has stopped.
-        if age > 45 and (ai_status != "retry" or retry_age is None or retry_age > 15):
-            if last_step is None or last_step > 45:
+        # A queue which has never started is backlog, not a failed API call.
+        # Alert only after substantial inactivity; active retries respect retryAt.
+        if age > 180 and (ai_status != "retry" or retry_age is None or retry_age > 30):
+            if last_step is not None and last_step > 120:
                 alerts.append(problem("AI_QUEUE_STALLED", identity,
-                                      f"{identity}: KI-Status {ai_status or 'pending'}, seit {round(age)} Min. offen."))
+                                      f"{identity}: KI-Status {ai_status or 'pending'}, "
+                                      f"letzter Schritt vor {round(last_step)} Min.", "warning"))
         if age >= 48 * 60:
             alerts.append(problem("AI_EXPIRED", identity,
-                                  f"{identity}: 48-Stunden-KI-Auswahlgrenze überschritten; Verarbeitung noch offen."))
+                                  f"{identity}: 48-Stunden-Frist überschritten; Queue-Status noch {ai_status or 'pending'}.",
+                                  "warning"))
         # A completed AI queue must not lose its individual listing(s).
         done = json_value(string(row, "KI Abgeschlossene Anzeigen JSON"), [])
         if done and ai_status != "completed":
@@ -171,13 +180,25 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
             if minutes(now, operation.get("started_at")) > 20:
                 alerts.append(problem("AI_UNCERTAIN_OPERATION", listing_id,
                                       f"{listing_id}: KI-Anfrage gestartet, aber kein Ergebnis gespeichert."))
-        if ai in ("ausstehend", "in bearbeitung") and age > 90 and not any(
-                a["key"].endswith(":" + listing_id) and a["code"].startswith("AI_") for a in alerts):
+        analysis_status = str(data.get("ai_analysis_status") or "").lower()
+        # no_images is a deliberate terminal outcome. An existing Drive attachment
+        # may be a mail thumbnail that was not safely attributed to the listing.
+        if analysis_status in ("no_images", "completed"):
+            continue
+        # Pending listings are expected while earlier jobs use the single AI worker.
+        # Only flag listings with a started, genuinely idle processing step.
+        if ai in ("ausstehend", "in bearbeitung") and completed_age > 180 and (
+                updated_age is not None and not any(
+                    a["key"].endswith(":" + listing_id) and a["code"].startswith("AI_")
+                    for a in alerts)):
             alerts.append(problem("LISTING_AI_STALLED", listing_id,
-                                  f"{listing_id}: KI-Bewertung seit {round(age)} Min. {ai}."))
-        if data.get("drive_files") and not data.get("analyzed_file_ids") and age > 120 and ai != "abgeschlossen":
+                                  f"{listing_id}: KI-Bewertung seit {round(completed_age)} Min. ohne Fortschritt.",
+                                  "warning"))
+        if (data.get("drive_files") and not data.get("analyzed_file_ids")
+                and updated_age is not None and updated_age > 180
+                and analysis_status in ("processing", "pending")):
             alerts.append(problem("IMAGE_ANALYSIS_STALLED", listing_id,
-                                  f"{listing_id}: Fotos vorhanden, nach {round(age)} Min. noch keines bewertet.",
+                                  f"{listing_id}: Bildanalyse seit {round(updated_age)} Min. ohne Fortschritt.",
                                   "warning"))
 
     # Queue metadata can refer to several separate listing IDs in one digest.
@@ -213,7 +234,7 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
                     # have no Anzeigen row; require a terminal decision instead.
                     terminal = any(string(e, "Datensatz-ID") == listing_id and
                                    string(e, "Status").lower() in
-                                   {"blocked", "duplicate", "unavailable", "excluded"}
+                                   {"blocked", "duplicate", "unavailable", "excluded", "completed", "no_images"}
                                    for e in events)
                     if not terminal:
                         alerts.append(problem("LISTING_MISSING", listing_id,
