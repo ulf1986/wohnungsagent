@@ -27,6 +27,15 @@ function compactListingPageText_(html) {
     const content = (tag.match(/content\s*=\s*["']([^"']*)["']/i) || [])[1];
     if (content) pieces.push(content);
   }
+  // Some portals expose listing essentials in itemprop and product meta tags
+  // even when the visible page is rendered client-side. Preserve the label
+  // so the strict source quote validator can still locate the evidence.
+  for (const tag of s.match(/<meta\b[^>]*>/gi) || []) {
+    const field=(tag.match(/(?:itemprop|name|property)\s*=\s*["'](price|priceCurrency|floorSize|numberOfRooms|numberOfBedrooms|product:price:amount)["']/i)||[])[1];
+    const value=(tag.match(/\bcontent\s*=\s*["']([^"']{1,80})["']/i)||[])[1];
+    if (!field || !value) continue;
+    pieces.push(field+': '+value);
+  }
   // Nur Inseratsfakten aus strukturierten Daten, niemals die gesamten Skriptobjekte.
   const allowed = ['name','description','address','floorSize','numberOfRooms','numberOfBedrooms',
     'numberOfBathroomsTotal','offers','price','priceCurrency','value','unitText','streetAddress',
