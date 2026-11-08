@@ -162,6 +162,16 @@ function runGmailImagePipeline() {
           row = createMailQueueRow(queue, mail);
         }
 
+        // ImmoScout mails add only redundant referrals. Skip the entire sender,
+        // including any Pisos links that might be embedded in those messages.
+        if (isDisabledImmoScoutMail_(mail)) {
+          setMailQueueStatus(queue, row, 'blocked',
+            'ImmoScout-Import deaktiviert', new Date().toISOString());
+          stats.blocked++;
+          logImageDiagnostic('mail_skip',{status:'blocked',reason:'immoscout_disabled'});
+          trashQueuedSearchMail_(mail, 'blocked');
+          continue;
+        }
         setMailQueueStatus(
           queue, row, 'processing', '', ''
         );
@@ -911,6 +921,12 @@ function parseMailQueueFiles(value) {
   } catch (error) {
     return [];
   }
+}
+
+/** ImmoScout is not an import source, even when its email contains other links. */
+function isDisabledImmoScoutMail_(mail) {
+  const from=String(mail && typeof mail.getFrom==='function' ? mail.getFrom() : '').toLowerCase();
+  return /@(?:[a-z0-9-]+\.)*(?:immobilienscout24\.de|is24\.de)(?:>|\s|$)/i.test(from);
 }
 
 /**
