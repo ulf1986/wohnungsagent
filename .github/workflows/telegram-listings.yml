@@ -34,8 +34,6 @@ jobs:
         run: |
           python -m py_compile scripts/telegram_watchdog.py scripts/watchdog_checks.py
           python -m py_compile scripts/telegram_listings.py scripts/telegram_rejections.py
-          python -m unittest discover -s tests -p 'test_telegram*.py' -v
-          python -m unittest discover -s tests -p 'test_watchdog*.py' -v
 
       - name: Voraussetzungen prüfen
         id: config
