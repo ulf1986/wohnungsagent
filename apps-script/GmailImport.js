@@ -215,7 +215,7 @@ function runGmailImagePipeline() {
         // Persist source links before images or AI. This enables an early
         // manual-review Telegram message even if subsequent downloads fail.
         // The sender rechecks Sperrliste and does not notify blocked IDs.
-        queue.getRange(row, 12).setValue(JSON.stringify(links));
+        queue.getRange(row, 12, 1, 1).setValues([[JSON.stringify(links)]]);
         SpreadsheetApp.flush();
         // Eine gesperrte Anzeige darf nicht die übrigen Angebote derselben Mail stoppen.
         const eligibleIds = propertyIds.filter(id => !blockedIds.has(id));
