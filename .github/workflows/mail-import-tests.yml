@@ -30,6 +30,7 @@ jobs:
           for file in apps-script/*.js; do node --check "$file"; done
           mkdir -p test-results
           node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/results.xml tests/*.test.cjs
+          node --test tests/test_ai_queue_final_states.js
       - name: Save test report
         if: always()
         uses: actions/upload-artifact@v4

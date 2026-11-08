@@ -244,23 +244,39 @@ def handle_incidents(alerts, now, known_mail_ids=None):
                     active[key] = {"key": key, "code": "MAIL_NOT_IMPORTED",
                                    "severity": old.get("severity", "critical"),
                                    "detail": old.get("detail", "Mail weiterhin nicht importiert.")}
+    # New critical incidents go out immediately on the next watchdog run.
+    # Existing incidents are summarized every four hours rather than individually.
     notifications = []
     for key, alert in active.items():
         last = parse_time(previous.get(key, {}).get("notified_at"))
-        if last is None or (now - last).total_seconds() > 120 * 60:
+        if last is None or (now - last).total_seconds() >= 240 * 60:
             notifications.append(alert)
     recovered = [key for key in previous if key not in active]
     if notifications:
-        lines = ["🚨 Wohnungsagent: " + str(len(notifications)) + " Monitoring-Störungen"]
-        for item in notifications[:12]:
-            lines.append(("❗ " if item["severity"] == "critical" else "⚠️ ") +
-                         item["code"] + ": " + item["detail"])
-        if len(notifications) > 12:
-            lines.append(f"… weitere {len(notifications) - 12} Störungen")
+        categories = {}
+        for alert in notifications:
+            name = alert["code"]
+            bucket = categories.setdefault(name, {"critical": False, "count": 0,
+                                                    "examples": []})
+            bucket["count"] += 1
+            bucket["critical"] |= alert["severity"] == "critical"
+            if len(bucket["examples"]) < 2:
+                bucket["examples"].append(alert["detail"])
+        lines = ["🚨 Wohnungsagent: " + str(len(notifications)) +
+                 " neue oder weiterhin bestehende Störungen"]
+        for name, bucket in sorted(categories.items(), key=lambda item:
+                                   (not item[1]["critical"], item[0])):
+            lines.append(("❗ " if bucket["critical"] else "⚠️ ") +
+                         name + " (" + str(bucket["count"]) + ")")
+            for example in bucket["examples"]:
+                lines.append("  " + example)
+        if recovered:
+            lines.append("✅ " + str(len(recovered)) + " Störung(en) behoben.")
         telegram("\n".join(lines)[:3900])
-    if recovered:
-        telegram("✅ Wohnungsagent: " + str(len(recovered)) +
-                 " Störung(en) behoben: " + ", ".join(recovered[:10])[:3000])
+    elif recovered and not active:
+        # Only one all-clear message; individual recoveries are recorded in the
+        # issue without generating a second noisy Telegram message.
+        telegram("✅ Wohnungsagent: Alle Monitoring-Störungen behoben.")
     next_state = {}
     for key, alert in active.items():
         old = previous.get(key, {})
