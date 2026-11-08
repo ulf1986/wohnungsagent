@@ -290,7 +290,7 @@ test('Gmail scans only messages received within 48 hours', () => {
 test('Main does not register ImmoScout image import', () => {
   const ctx=vm.createContext({console});
   const sources=fs.readdirSync(path.join(root,'apps-script')).filter(p=>p.endsWith('.js'))
-    .map(p=>fs.readFileSync(path.join(root,'apps-script',p),'utf8')).join('\\n');
+    .map(p=>fs.readFileSync(path.join(root,'apps-script',p),'utf8')).join('\n');
   vm.runInContext(sources,ctx);
   assert.equal(vm.runInContext('Object.hasOwn(CONFIG.providers, "immoscout")',ctx),false);
 });
