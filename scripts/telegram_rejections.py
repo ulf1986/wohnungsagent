@@ -69,7 +69,6 @@ def find_listing_url(listing_id, mail_id, queue_rows):
         "fotocasa": "fotocasa.es",
         "pisos": "pisos.com",
         "milanuncios": "milanuncios.com",
-        "immoscout": "is24.de",
     }
     domain = allowed.get(provider.lower())
     if not domain or not number.isdigit():
