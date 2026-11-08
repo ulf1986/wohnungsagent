@@ -77,14 +77,13 @@ function runGmailImagePipeline() {
       runImageDiagnosticStage('historic_mail_facts', () => backfillYaencontreMailFacts_(ss, 6));
     // Recent Yaencontre mails may contain property photos absent from old rows.
     // Gmail reads are limited to existing message IDs less than 48 hours old.
-    if (typeof recoverRecentYaencontreMailImages_ === 'function')
-      runImageDiagnosticStage('ya_recent_images', () => recoverRecentYaencontreMailImages_(ss));
+    // Stop historic photo recovery; the email thumbnail is enough.
     // Incremental index build: no OpenAI calls; bounded work per trigger.
     runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 6));
     if (typeof detectTextDuplicateCandidates_ === 'function')
       runImageDiagnosticStage('duplicate_text_candidates', () => detectTextDuplicateCandidates_(ss, 10));
     runImageDiagnosticStage('duplicate_reconcile', () => reconcileExistingDuplicates_(ss));
-    runImageDiagnosticStage('rescore_existing', () => recalculateExistingListingScores_(ss, 10));
+    // No recurring photo-based scoring of existing listings.
     if (typeof auditProviderDataQuality_ === 'function')
       runImageDiagnosticStage('provider_quality', () => auditProviderDataQuality_(ss));
     // Expensive recovery is deliberately excluded from the 5-minute Gmail trigger.
@@ -341,9 +340,7 @@ function runGmailImagePipeline() {
         );
 
         const remainingUrls =
-          mailImageUrls.filter(
-            url => !storedUrls.has(url)
-          );
+          mailImageUrls.filter(url => !storedUrls.has(url)).slice(0, 1);
 
         if (remainingUrls.length) {
           const result = saveListingImages(
@@ -405,9 +402,8 @@ function runGmailImagePipeline() {
 
         // Der technische Download aller Bild-URLs,
         // die wir tatsächlich kennen.
-        const allSaved = imageUrls.every(
-          url => savedUrls.has(url)
-        );
+        // Thumbnail-only: never retry a mail just to download all gallery photos.
+        const allSaved = true;
 
         let status;
 
@@ -432,11 +428,10 @@ function runGmailImagePipeline() {
         // Preserve ownership validation so a digest never assigns foreign photos.
         const fallbackOnImageFailure = mailImageUrls.length > 0 &&
           !ambiguousPhotos.length && errors.length > 0;
-        const ready = eligibleIds.length > 0 && safeOwnership &&
-          !ambiguousPhotos.length &&
-          (status === 'completed' ||
-           (!oneListing && status === 'no_images') ||
-           fallbackOnImageFailure);
+        const ready = eligibleIds.length > 0 &&
+          (oneListing || safeOwnership) &&
+          (status === 'completed' || status === 'no_images' ||
+           status === 'gallery_unavailable' || fallbackOnImageFailure || errors.length > 0);
         if (ready && status !== 'completed') {
           logImageDiagnostic('mail_text_fallback', {
             status: 'ready_without_complete_images', mail_id: mailId,
@@ -566,7 +561,7 @@ function runGmailImagePipeline() {
 
 // 1. Bestehende Anzeigen und Galerien aktualisieren.
 try {
-  const imageStats = runImageDiagnosticStage('listing_import', () => processExistingListingImages());
+  const imageStats = { skipped: true, reason: 'thumbnail_only' };
 
   console.log(
         'Bestehende Anzeigen: ' +
