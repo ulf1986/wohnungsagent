@@ -1181,8 +1181,7 @@ function acceptListingPageResult_(result, page, listingId, knownEmail) {
 
 function applyListingPresentation_(sheet,row,cols,fields,url,data) {
   const rooms=finiteNumber_(fields.rooms);
-  const title=[rooms !== '' ? String(rooms).replace('.',',')+'-Zimmer-Wohnung' :
-    cleanAiText_(fields.title,150) || 'Wohnung',cleanAiText_(fields.address || fields.neighborhood,180)].filter(Boolean).join(' · ');
+  const title=rooms !== '' ? String(rooms).replace('.',',')+'-Zimmer-Wohnung' : 'Wohnung';
   const cell=sheet.getRange(row,cols['Titel']+1);
   if (/^https:\/\//i.test(url) && typeof SpreadsheetApp.newRichTextValue === 'function')
     cell.setRichTextValue(SpreadsheetApp.newRichTextValue().setText(title).setLinkUrl(url.split(/[?#]/)[0]).build());
