@@ -254,7 +254,7 @@ def number(value):
 def eligible(row):
     if text(row, "Zu löschen").lower() in ("true", "ja", "yes", "1"):
         return False
-    if text(row, "Status").lower() != "geeignet":
+    if text(row, "Status").lower() not in ("geeignet", "prüfung erforderlich"):
         return False
     if text(row, "KI-Bewertung").lower() != "abgeschlossen":
         return False
@@ -281,42 +281,28 @@ def source_photo(row):
     return ""
 
 def card(row):
-    title = text(row, "Titel")[:140] or text(row, "Datensatz-ID")
+    """Compact text-only listing card; existing thumbnail stays untouched."""
     url = text(row, "Anzeigenlink")
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https":
         raise ValueError("Inseratslink ist kein HTTPS-Link")
-    # Only tracking parameters are removed; preserve URLs that need a query.
-    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    query = [(k, v) for k, v in query if not k.startswith("utm_")]
+    query = [(k, v) for k, v in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+             if not k.startswith("utm_")]
     clean_url = urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
     rent = number(text(row, "Miete"))
     area = number(text(row, "Fläche"))
-    per_m2 = rent / area if rent and area else 0
-    details = []
-    try:
-        data = json.loads(text(row, "Bildanalyse JSON") or "{}")
-        fields = data.get("extracted_fields") or (data.get("ai_pipeline") or {}).get("email_fields") or {}
-        rooms = fields.get("rooms")
-        if rooms:
-            details.append(f"{rooms} Zimmer")
-    except (ValueError, TypeError, AttributeError):
-        pass
-    details.extend([f"{int(area)} m²", f"{int(rent)} €/Monat", f"{per_m2:.1f} €/m²"])
-    score = text(row, "Wohnungsbewertung (0–100)")
-    price_score = text(row, "Preisbewertung (0–100)")
-    lines = ["🏠 <b>Neue passende Wohnung</b>",
-             html.escape(title),
-             "",
-             " · ".join(details)]
-    if score or price_score:
-        lines.append("Bewertung: Wohnung " + html.escape(score or "?") +
-                     "/100 · Preis " + html.escape(price_score or "?") + "/100")
-    summary = re.sub(r"\s+", " ", text(row, "Zusammenfassung")).strip()
-    if summary:
-        lines.extend(["", html.escape(summary[:250]) + ("…" if len(summary) > 250 else "")])
+    if not rent or not area:
+        raise ValueError("Miete oder Fläche fehlt")
+    lines = ["🏠 <b>Wohnungsangebot</b>",
+             f"{area:g} m² · {rent:g} €/Monat · {rent / area:.2f} €/m²"]
+    restrictions = text(row, "Einschränkungen")
+    conditions = text(row, "Mietprüfung")
+    if restrictions:
+        lines.append("Konditionen: " + html.escape(restrictions[:260]))
+    if conditions and conditions != "Langzeitmiete bestätigt; Pflichtangaben vorhanden":
+        lines.append(html.escape(conditions[:260]))
     lines.extend(["", f'<a href="{html.escape(clean_url, quote=True)}">Inserat öffnen</a>'])
-    return "\n".join(lines)[:1000]
+    return "\\n".join(lines)[:1000]
 
 def send(row):
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
