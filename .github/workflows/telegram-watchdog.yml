@@ -46,6 +46,9 @@ jobs:
       - name: Monitoring-Regressionstests
         run: python -m unittest discover -s tests -p 'test_watchdog*.py' -v
 
+      - name: KI-Queue-Regressionstests
+        run: node --test tests/test_ai_queue_final_states.js
+
       - name: Konfiguration prüfen
         id: config
         env:
