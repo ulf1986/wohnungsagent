@@ -1076,16 +1076,16 @@ function extractPropertyImageUrls(html) {
 function extractAnchoredPortalMailImages_(html, provider) {
   if (!['fotocasa','idealista'].includes(provider)) return [];
   const results=[],seen=new Set();
-  for(const a of String(html||'').matchAll(/<a\\b([^>]*)>([\\s\\S]*?)<\\/a\\s*>/gi)){
+  for(const a of String(html||'').matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)){
     const listingUrl=getMailHtmlAttribute('<a '+a[1]+'>','href');
     const listingId=getMailListingId(listingUrl);
     if(!listingId||!listingId.startsWith(provider+':'))continue;
-    for(const tag of a[2].match(/<img\\b[^>]*>/gi)||[]){
+    for(const tag of a[2].match(/<img\b[^>]*>/gi)||[]){
       const src=getMailHtmlAttribute(tag,'src')||getMailHtmlAttribute(tag,'data-src');
       if(!isPropertyImageUrl(src))continue;
-      const host=(String(src).match(/^https:\\/\\/([^/]+)/i)||[])[1]||'';
+      const host=(String(src).match(/^https:\/\/([^/]+)/i)||[])[1]||'';
       if(provider==='fotocasa'&&host!=='static.fotocasa.es')continue;
-      if(provider==='idealista'&&!/(^|\\.)img\\d*\\.idealista\\.com$/i.test(host))continue;
+      if(provider==='idealista'&&!/(^|\.)img\d*\.idealista\.com$/i.test(host))continue;
       const key=listingId+'|'+src;if(seen.has(key))continue;
       seen.add(key);results.push({listing_id:listingId,listing_url:listingUrl,source_url:src});
     }
