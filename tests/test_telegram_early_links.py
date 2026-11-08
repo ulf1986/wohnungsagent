@@ -48,13 +48,14 @@ class PreliminaryLinkTests(unittest.TestCase):
             "'Verarbeitung'!L1:L2000": [
                 ["Queue Inseratslinks JSON"], [__import__("json").dumps(urls)],
                 ['["https://www.idealista.com/inmueble/8/"]']],
-            "'Verarbeitung'!O1:W2000": [
+            "'Verarbeitung'!O1:Y2000": [
                 ["Queue Bildstatus", "Queue Fehler", "Queue Bereit UTC",
                  "KI Verarbeitungsstatus", "KI Fehler", "KI Aktualisiert UTC",
-                 "KI Datensatz-ID", "KI Wiederholung ab UTC", "KI Versuche"],
+                 "KI Datensatz-ID", "KI Wiederholung ab UTC", "KI Versuche",
+                 "KI Abgeschlossene Anzeigen JSON", "KI Aktuelle Anzeigen-ID"],
                 ["ready_for_ai", "", "", "retry", "OpenAI HTTP 429",
-                 "", "", "", "1"],
-                ["ready_for_ai", "", "", "retry", "HTTP 429", "", "", "", "1"]],
+                 "idealista:1", "", "1", "[]", "idealista:1"],
+                ["ready_for_ai", "", "", "retry", "HTTP 429", "", "idealista:8", "", "1", "[]", "idealista:8"]],
             "'Sperrliste'!A2:A2000": [["idealista:2"]],
             "'Duplikate'!A2:C2000": [
                 ["idealista:3", "idealista:9", "duplicate"],
@@ -67,7 +68,9 @@ class PreliminaryLinkTests(unittest.TestCase):
             "idealista:5": {"Miete": "950 €", "Fläche": "53", "KI-Bewertung": "Ausstehend"},
             "idealista:6": {"Miete": "990 €", "Fläche": "70", "KI-Bewertung": "Abgeschlossen",
                             "Status": "Geeignet", "Anzeigenlink": urls[5], "Datensatz-ID": "idealista:6"},
-            "idealista:7": {"Miete": "1100 €", "Fläche": "", "KI-Bewertung": "Ausstehend"},
+            "idealista:7": {"Miete": "1100 €", "Fläche": "", "KI-Bewertung": "Ausstehend",
+                            "Bildanalyse JSON": '{"ai_pipeline":{"email_fields":{"title":"Wohnung"},
+                                                   "api_operation":{"status":"stored"}}}'},
         }
         with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
             result = listings.early_candidates(NOW, set(), current)
@@ -81,19 +84,20 @@ class PreliminaryLinkTests(unittest.TestCase):
                 ["Queue Gmail-ID", "Queue Eingang UTC", "Queue Betreff"], ["one", recent, "Neu"]],
             "'Verarbeitung'!L1:L2000": [
                 ["Queue Inseratslinks JSON"], ['["' + url + '"]']],
-            "'Verarbeitung'!O1:W2000": [
+            "'Verarbeitung'!O1:Y2000": [
                 ["Queue Bildstatus", "Queue Fehler", "Queue Bereit UTC",
                  "KI Verarbeitungsstatus", "KI Fehler", "KI Aktualisiert UTC",
-                 "KI Datensatz-ID", "KI Wiederholung ab UTC", "KI Versuche"],
-                ["ready_for_ai", "", "", "pending", "", "", "", "", "0"]],
+                 "KI Datensatz-ID", "KI Wiederholung ab UTC", "KI Versuche",
+                 "KI Abgeschlossene Anzeigen JSON", "KI Aktuelle Anzeigen-ID"],
+                ["ready_for_ai", "", "", "pending", "", "", "", "", "0", "[]", ""]],
             "'Sperrliste'!A2:A2000": [],
             "'Duplikate'!A2:C2000": [],
             "'Entscheidungen'!A1:H10000": [],
         }
         with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
             self.assertEqual(listings.early_candidates(NOW, set(), {}), [])
-        matrices["'Verarbeitung'!O1:W2000"][1][0] = "retry"
-        matrices["'Verarbeitung'!O1:W2000"][1][1] = "Bilddownload HTTP 403"
+        matrices["'Verarbeitung'!O1:Y2000"][1][0] = "retry"
+        matrices["'Verarbeitung'!O1:Y2000"][1][1] = "Bilddownload HTTP 403"
         with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
             self.assertEqual([x["id"] for x in listings.early_candidates(NOW, set(), {})],
                              ["idealista:1"])
