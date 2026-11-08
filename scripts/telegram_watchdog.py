@@ -198,9 +198,12 @@ def actions_health(now):
     parsed = parse_time(latest.get("updated_at"))
     age = (now - parsed).total_seconds() / 60 if parsed else 9999
     alerts = []
-    if age > 35:
+    # GitHub Actions scheduled runs can be delayed even when the last
+    # run succeeded. Avoid declaring an outage for a 35-45 minute gap.
+    if age > 65:
         alerts.append(problem("TELEGRAM_WORKFLOW_STALE", "sender",
-                              f"Angebotsworkflow seit {round(age)} Min. nicht abgeschlossen."))
+                              f"Angebotsworkflow seit {round(age)} Min. nicht abgeschlossen.",
+                              "critical" if age > 90 else "warning"))
     if latest.get("conclusion") != "success":
         alerts.append(problem("TELEGRAM_WORKFLOW_FAILED", "sender",
                               f"Angebotsworkflow {latest.get('conclusion')}; Run {latest.get('id')}."))
