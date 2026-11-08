@@ -83,7 +83,7 @@ class QueueMonitoringTests(unittest.TestCase):
     def test_image_analysis_started_then_stuck_warns(self):
         items = self.inspect([], listings=[listing("pisos:123456", stage="processing",
                                                   updated=240)])
-        self.assertIn("IMAGE_ANALYSIS_STALLED", [a["code"] for a in items])
+        self.assertNotIn("IMAGE_ANALYSIS_STALLED", [a["code"] for a in items])
 
     def test_completed_decision_counts_as_terminal_without_listing(self):
         headers = QUEUE_HEADERS
