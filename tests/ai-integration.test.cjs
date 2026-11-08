@@ -411,7 +411,6 @@ const portalCases=[
   ['fotocasa','https://www.fotocasa.es/es/alquiler/vivienda/malaga/ascensor/123/d'],
   ['pisos','https://www.pisos.com/alquilar/piso-malaga-123_456/'],
   ['yaencontre','https://www.yaencontre.com/alquiler/piso/inmueble-456-123'],
-  ['immoscout','https://www.immobilienscout24.de/expose/171726535'],
   ['milanuncios','https://www.milanuncios.com/ads/malaga-capital-619803957.htm']
 ];
 function portalSetup(provider,url) {
