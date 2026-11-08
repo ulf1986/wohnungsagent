@@ -28,25 +28,76 @@ class PreliminaryLinkTests(unittest.TestCase):
         self.assertEqual(listings.preliminary_listing_id(
             "https://www.immobilienscout24.de/expose/112889801"), "")
 
-    def test_sends_only_recent_nonblocked_nonexcluded_unsent_ids(self):
+    def test_screen_before_fallback_and_reject_hard_limits_duplicates(self):
         recent = (NOW - dt.timedelta(minutes=10)).isoformat()
         old = (NOW - dt.timedelta(hours=5)).isoformat()
+        urls = [
+            "https://www.idealista.com/inmueble/1/",
+            "https://www.idealista.com/inmueble/2/",
+            "https://www.idealista.com/inmueble/3/",
+            "https://www.idealista.com/inmueble/4/",
+            "https://www.idealista.com/inmueble/5/",
+            "https://www.idealista.com/inmueble/6/",
+            "https://www.idealista.com/inmueble/7/",
+        ]
         matrices = {
             "'Verarbeitung'!H1:J2000": [
                 ["Queue Gmail-ID", "Queue Eingang UTC", "Queue Betreff"],
                 ["one", recent, "Neue Angebote"],
                 ["old", old, "Alte Angebote"]],
             "'Verarbeitung'!L1:L2000": [
-                ["Queue Inseratslinks JSON"],
-                ['["https://www.idealista.com/inmueble/1/",'
-                 '"https://www.yaencontre.com/alquiler/piso/inmueble-9-2",'
-                 '"https://www.pisos.com/alquilar/piso-centro-12345678_100/"]'],
-                ['["https://www.idealista.com/inmueble/4/"]']],
-            "'Sperrliste'!A2:A2000": [["yaencontre:2"]],
+                ["Queue Inseratslinks JSON"], [__import__("json").dumps(urls)],
+                ['["https://www.idealista.com/inmueble/8/"]']],
+            "'Verarbeitung'!O1:W2000": [
+                ["Queue Bildstatus", "Queue Fehler", "Queue Bereit UTC",
+                 "KI Verarbeitungsstatus", "KI Fehler", "KI Aktualisiert UTC",
+                 "KI Datensatz-ID", "KI Wiederholung ab UTC", "KI Versuche"],
+                ["ready_for_ai", "", "", "retry", "OpenAI HTTP 429",
+                 "", "", "", "1"],
+                ["ready_for_ai", "", "", "retry", "HTTP 429", "", "", "", "1"]],
+            "'Sperrliste'!A2:A2000": [["idealista:2"]],
+            "'Duplikate'!A2:C2000": [
+                ["idealista:3", "idealista:9", "duplicate"],
+                ["idealista:4", "idealista:4", "candidate"]],
+            "'Entscheidungen'!A1:H10000": [
+                ["Zeit (UTC)", "Lauf-ID", "Stufe", "Gmail-ID",
+                 "Datensatz-ID", "Status", "Grund", "Haupteintrag-ID"]],
+        }
+        current = {
+            "idealista:5": {"Miete": "950 €", "Fläche": "53", "KI-Bewertung": "Ausstehend"},
+            "idealista:6": {"Miete": "990 €", "Fläche": "70", "KI-Bewertung": "Abgeschlossen",
+                            "Status": "Geeignet", "Anzeigenlink": urls[5], "Datensatz-ID": "idealista:6"},
+            "idealista:7": {"Miete": "1100 €", "Fläche": "", "KI-Bewertung": "Ausstehend"},
         }
         with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
-            result = listings.early_candidates(NOW, {"pisos:12345678"}, {})
-        self.assertEqual([x["id"] for x in result], ["idealista:1"])
+            result = listings.early_candidates(NOW, set(), current)
+        self.assertEqual([x["id"] for x in result], ["idealista:1", "idealista:7"])
+
+    def test_no_fallback_before_first_attempt(self):
+        recent = (NOW - dt.timedelta(minutes=12)).isoformat()
+        url = "https://www.idealista.com/inmueble/1/"
+        matrices = {
+            "'Verarbeitung'!H1:J2000": [
+                ["Queue Gmail-ID", "Queue Eingang UTC", "Queue Betreff"], ["one", recent, "Neu"]],
+            "'Verarbeitung'!L1:L2000": [
+                ["Queue Inseratslinks JSON"], ['["' + url + '"]']],
+            "'Verarbeitung'!O1:W2000": [
+                ["Queue Bildstatus", "Queue Fehler", "Queue Bereit UTC",
+                 "KI Verarbeitungsstatus", "KI Fehler", "KI Aktualisiert UTC",
+                 "KI Datensatz-ID", "KI Wiederholung ab UTC", "KI Versuche"],
+                ["ready_for_ai", "", "", "pending", "", "", "", "", "0"]],
+            "'Sperrliste'!A2:A2000": [],
+            "'Duplikate'!A2:C2000": [],
+            "'Entscheidungen'!A1:H10000": [],
+        }
+        with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
+            self.assertEqual(listings.early_candidates(NOW, set(), {}), [])
+        matrices["'Verarbeitung'!O1:W2000"][1][0] = "retry"
+        matrices["'Verarbeitung'!O1:W2000"][1][1] = "Bilddownload HTTP 403"
+        with patch.object(listings, "sheet_matrix", side_effect=lambda r: matrices[r]):
+            self.assertEqual([x["id"] for x in listings.early_candidates(NOW, set(), {})],
+                             ["idealista:1"])
+
 
     def test_provisional_message_needs_no_ai_or_photos(self):
         sent = []
@@ -57,7 +108,7 @@ class PreliminaryLinkTests(unittest.TestCase):
                                  "url": "https://www.idealista.com/inmueble/1/?utm_source=mail",
                                  "subject": "Neue Wohnung"})
         self.assertEqual(len(sent), 1)
-        self.assertIn("noch nicht geprüft", sent[0]["text"])
+        self.assertIn("unvollständig", sent[0]["text"])
         self.assertIn("Inserat jetzt öffnen", sent[0]["text"])
         self.assertNotIn("utm_source", sent[0]["text"])
 
