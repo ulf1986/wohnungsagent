@@ -6,7 +6,8 @@ function cleanAiText_(value, limit) {
     .replace(/<\/?(?:p|div|br|li|tr|h[1-6]|section|article|main)\b[^>]*>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&')
-    .replace(/&euro;|&#8364;/gi, '€').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'");
+    .replace(/&euro;|&#8364;/gi, '€')
+    .replace(/&sup2;|&#178;|&#x0*b2;/gi, '²').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'");
   const lines = text.split(/\r?\n/).map(s => s.replace(/[ \t]+/g, ' ').trim());
   const seen = new Set();
   text = lines.filter(s => {
