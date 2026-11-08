@@ -75,6 +75,10 @@ function runGmailImagePipeline() {
     // One-time, bounded local backfill from persisted Yaencontre mail cards.
     if (typeof backfillYaencontreMailFacts_ === 'function')
       runImageDiagnosticStage('historic_mail_facts', () => backfillYaencontreMailFacts_(ss, 6));
+    // Recent Yaencontre mails may contain property photos absent from old rows.
+    // Gmail reads are limited to existing message IDs less than 48 hours old.
+    if (typeof recoverRecentYaencontreMailImages_ === 'function')
+      runImageDiagnosticStage('ya_recent_images', () => recoverRecentYaencontreMailImages_(ss));
     // Incremental index build: no OpenAI calls; bounded work per trigger.
     runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 6));
     if (typeof detectTextDuplicateCandidates_ === 'function')
