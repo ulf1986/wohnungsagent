@@ -60,16 +60,66 @@ def preliminary_listing_id(url):
     return ""
 
 
-def early_candidates(now, seen, current):
-    """Recently received queued links get one provisional message before AI.
+def hard_excluded(row):
+    """Only reject from known facts; unknown fields require a manual review."""
+    if not row:
+        return False
+    if text(row, "Zu löschen").lower() in ("true", "ja", "yes", "1"):
+        return True
+    if text(row, "Status").lower() in ("ausgeschlossen", "nicht verfügbar"):
+        return True
+    rent, area = number(text(row, "Miete")), number(text(row, "Fläche"))
+    if rent is not None and not 800 <= rent <= 1200:
+        return True
+    if area is not None and area < 60:
+        return True
+    return False
 
-    Queue links are durably saved immediately after extraction in Apps Script.
-    A short lookback prevents historical notifications after deployment.
+
+def first_attempt_finished(queue, row):
+    """A link alone, or ready_for_ai, is NOT evidence of a screening attempt."""
+    if row:
+        try:
+            data = json.loads(text(row, "Bildanalyse JSON") or "{}")
+            pipe = data.get("ai_pipeline") or {}
+            operation = pipe.get("api_operation") or {}
+            if pipe.get("email_fields") and operation.get("status") == "stored":
+                return True
+            if pipe.get("email_fields") and pipe.get("stage") in ("images", "completed"):
+                return True
+        except (TypeError, ValueError, AttributeError):
+            pass
+    ai_state = str(queue.get("ai_status") or "").lower()
+    attempts = number(queue.get("ai_attempts"))
+    return (ai_state in ("retry", "failed_final", "needs_review", "expired") and
+            ((attempts is not None and attempts >= 1) or
+             bool(queue.get("ai_error"))))
+
+
+def early_candidates(now, seen, current):
+    """Send a fallback only AFTER one screening attempt, never on raw link receipt.
+
+    Hard exclusions, blocklist, confirmed/candidate duplicates and already-sent
+    IDs all win over the fallback path. Unknown sizes remain labelled unverified.
     """
     headers = sheet_matrix("'Verarbeitung'!H1:J2000")
     link_col = sheet_matrix("'Verarbeitung'!L1:L2000")
+    import_states = sheet_matrix("'Verarbeitung'!O1:W2000")
     blocked = sheet_matrix("'Sperrliste'!A2:A2000")
+    registry = sheet_matrix("'Duplikate'!A2:C2000")
+    decisions = sheet_matrix("'Entscheidungen'!A1:H10000")
     forbidden = {str(row[0]).strip().lower() for row in blocked if row and row[0]}
+    duplicate_states = {
+        str(r[0]).strip().lower(): (str(r[1]).strip().lower() if len(r) > 1 else "",
+                                   str(r[2]).strip().lower() if len(r) > 2 else "")
+        for r in registry if r and r[0]
+    }
+    # A past final decision must not be undone by an outdated queue entry.
+    final_decisions = {}
+    for d in decisions[1:]:
+        if len(d) > 5 and d[4]:
+            final_decisions[str(d[4]).lower()] = str(d[5]).lower()
+    excluded_decisions = {"blocked", "duplicate", "unavailable", "excluded"}
     candidates = {}
     for index, row in enumerate(headers[1:], 1):
         if len(row) < 2 or index >= len(link_col):
@@ -86,23 +136,55 @@ def early_candidates(now, seen, current):
             continue
         if not isinstance(links, list):
             continue
+        # O:W maps mail status and R/S/W to indices 3/4/8.
+        state = import_states[index] if index < len(import_states) else []
+        queue = {
+            "mail_status": str(state[0]).lower() if state else "",
+            "mail_error": str(state[1]) if len(state) > 1 else "",
+            "ai_status": str(state[3]).lower() if len(state) > 3 else "",
+            "ai_error": str(state[4]) if len(state) > 4 else "",
+            "ai_attempts": state[8] if len(state) > 8 else "",
+        }
         subject = str(row[2])[:150] if len(row) > 2 else ""
         for url in links:
             listing_id = preliminary_listing_id(url)
-            if (not listing_id or listing_id in seen or
-                    listing_id.lower() in forbidden):
+            if not listing_id or listing_id in seen or listing_id.lower() in forbidden:
                 continue
-            if listing_id in current:
-                row_now = current[listing_id]
-                if text(row_now, "Zu löschen").lower() in ("true", "ja", "yes", "1"):
-                    continue
-                if text(row_now, "Status").lower() == "ausgeschlossen":
-                    continue
+            record = duplicate_states.get(listing_id.lower())
+            if record and (record[1] in ("blocked", "duplicate", "candidate") or
+                           record[0] in seen):
+                continue
+            if final_decisions.get(listing_id.lower()) in excluded_decisions:
+                continue
+            listing = current.get(listing_id)
+            if hard_excluded(listing):
+                continue
+            # A fully assessed and eligible listing uses the regular, richer card.
+            if listing and eligible(listing):
+                continue
+            if listing and text(listing, "KI-Bewertung").lower() == "abgeschlossen":
+                continue
+            # We do not notify merely because a mail has entered the queue.
+            attempted = first_attempt_finished(queue, listing)
+            # Import failed before reaching the text worker: allow fallback,
+            # but only after the first import failure was persisted.
+            import_failed = (queue["mail_status"] in
+                             ("retry", "gallery_unavailable", "no_images") and
+                             bool(queue["mail_error"]))
+            if not attempted and not import_failed:
+                continue
+            # Link-only messages on an import failure get a short grace period
+            # for an otherwise healthy first pass to finish.
+            if import_failed and not attempted and age < 5 * 60:
+                continue
             if listing_id not in candidates or received > candidates[listing_id]["received"]:
-                candidates[listing_id] = {"id": listing_id, "url": str(url),
-                                          "subject": subject, "received": received}
+                candidates[listing_id] = {
+                    "id": listing_id, "url": str(url),
+                    "subject": subject, "received": received,
+                    "rent": number(text(listing, "Miete")) if listing else None,
+                    "area": number(text(listing, "Fläche")) if listing else None,
+                }
     return sorted(candidates.values(), key=lambda item: item["received"], reverse=True)
-
 
 def send_early(candidate):
     """Link only. No OpenAI, no image fetch, no unverified quality claims."""
@@ -115,11 +197,14 @@ def send_early(candidate):
              if not k.startswith("utm_")]
     clean = urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
     msg = "\n".join([
-        "🔎 <b>Neue Wohnungsanzeige: Link vor der KI-Auswertung</b>",
+        "🔎 <b>Wohnungsanzeige: Manuell prüfen</b>",
         html.escape(candidate["id"]),
         html.escape(candidate["subject"][:100]),
         "",
-        "Angaben und Eignung noch nicht geprüft. Du kannst die Anzeige bereits ansehen.",
+        "Die automatische Prüfung war beim ersten Versuch unvollständig.",
+        ("Fläche: " + str(int(candidate["area"])) + " m²" if candidate.get("area") is not None else "Fläche: noch unbekannt"),
+        ("Miete: " + str(int(candidate["rent"])) + " €/Monat" if candidate.get("rent") is not None else "Miete: noch unbekannt"),
+        "Bitte vor Kontaktaufnahme selbst prüfen.",
         f'<a href="{html.escape(clean, quote=True)}">Inserat jetzt öffnen</a>'
     ])
     result = request_json(f"https://api.telegram.org/bot{token}/sendMessage",
