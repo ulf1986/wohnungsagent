@@ -94,6 +94,27 @@ class QueueMonitoringTests(unittest.TestCase):
         self.assertNotIn("LISTING_MISSING", [a["code"] for a in items])
 
 
+class SenderScheduleTests(unittest.TestCase):
+    def test_recent_success_with_delayed_github_schedule_is_not_outage(self):
+        runs = {"workflow_runs": [{
+            "status": "completed", "conclusion": "success",
+            "updated_at": ago(42), "id": 100
+        }]}
+        with patch.object(monitor, "gh_request", return_value=runs):
+            self.assertEqual(monitor.actions_health(NOW), [])
+
+    def test_long_absence_still_warns(self):
+        runs = {"workflow_runs": [{
+            "status": "completed", "conclusion": "success",
+            "updated_at": ago(70), "id": 100
+        }]}
+        with patch.object(monitor, "gh_request", return_value=runs):
+            alerts = monitor.actions_health(NOW)
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["code"], "TELEGRAM_WORKFLOW_STALE")
+        self.assertEqual(alerts[0]["severity"], "warning")
+
+
 class TelegramDigestTests(unittest.TestCase):
     def test_new_alert_sent_immediately_once(self):
         a = checks.problem("AI_AUTH", "mail1", "Wrong key")
