@@ -100,7 +100,7 @@ function processNextAiListing(ss, queue, options) {
   if (ids.length > 1 && allFiles.some(file => {
     if (!file || !file.file_id) return false;
     const name = String(file.name || '').toLowerCase();
-    const match = name.match(/^(idealista|fotocasa|yaencontre|pisos|immoscout|milanuncios)_(\d+)_/);
+    const match = name.match(/^(idealista|fotocasa|yaencontre|pisos|milanuncios)_(\d+)_/);
     const owner = file.listing_id || getMailListingId(file.listing_url || '') ||
       (match ? match[1] + ':' + match[2] : '');
     return !owner || !ids.includes(owner) ||
@@ -1417,10 +1417,52 @@ function parseAiListingJson_(value) {
 function parseJsonArray_(value) { if(!value)return []; try { const x=JSON.parse(String(value)); return Array.isArray(x)?x:[]; } catch(e){return [];} }
 function mergeDriveFiles_(a,b) { const out=[]; const seen=new Set(); for(const x of [...(a||[]),...(b||[])]) { if(!x||!x.file_id||seen.has(x.file_id))continue; seen.add(x.file_id); out.push(x); } return out; }
 /** Separate the visible card of one listing from a multi-offer mail. */
+/**
+ * Extract a single Yaencontre card from a digest without losing the price/area
+ * placed AFTER the repeated image/thumbnail URLs. Never use adjacent card text.
+ */
+function extractYaencontreMailCard_(body, listingId) {
+  if (!/^yaencontre:\\d+$/.test(listingId)) return '';
+  const text=String(body||'');
+  const matches=[];
+  const regex=/https?:\\/\\/[^\\s<>"']+/gi;
+  let match;
+  while ((match=regex.exec(text))!==null) {
+    const url=match[0].replace(/[),.;>]+$/,'');
+    const id=getMailListingId(url);
+    if(id)matches.push({id,at:match.index,end:match.index+match[0].length,url});
+  }
+  const owned=matches.filter(x=>x.id===listingId);
+  if(!owned.length)return '';
+  // Prefer the textual card marker; its title precedes that link, its price follows it.
+  const marker=owned.find(x=>/cont-principal-link-inmueble/i.test(x.url))||owned[0];
+  const previousDifferent=[...matches].reverse().find(x=>x.id!==listingId&&x.at<marker.at);
+  const nextDifferent=matches.find(x=>x.id!==listingId&&x.at>marker.at);
+  const start=Math.max(previousDifferent?previousDifferent.end:0,marker.at-350);
+  let end=nextDifferent?nextDifferent.at:text.length;
+  const endMarker=/\\n(?:Más oportunidades|Ver similares|Descubre más|Darse de baja|Cancelar suscripción|unsubscribe)\\b/i;
+  const remaining=text.slice(marker.end,end);
+  const stop=endMarker.exec(remaining);
+  if(stop)end=Math.min(end,marker.end+stop.index);
+  if(end<=start)return '';
+  const chunk=text.slice(start,Math.min(end,start+6500));
+  const cleaned=chunk
+    .replace(/<?https?:\\/\\/[^\\s<>"']+>?/gi,' ')
+    .replace(/\\[image:[^\\]]*\\]/gi,' ')
+    .split(/\\r?\\n/)
+    .map(line=>line.trim())
+    .filter(line=>line&&!/^(?:ver detalles|ver similares|hola|¡hola)\\b/i.test(line));
+  // Do not return a bare link or text without any visible housing facts.
+  const result=cleaned.join('\\n').slice(0,2100);
+  return /(?:\\d[\\d.,]*\\s*€|\\d+\\s*m[²2]|\\d+\\s*hab\\.?)/i.test(result)?result:'';
+}
+/** Separate the visible card of one listing from a multi-offer mail. */
 function extractListingMailExcerpt_(body, listingId) {
+  const yaCard=extractYaencontreMailCard_(body,listingId);
+  if(yaCard)return yaCard;
   const text = String(body || '');
   const occurrences = [];
-  const urls = /https?:\/\/[^\s<>"']+/gi;
+  const urls = /https?:\\/\\/[^\\s<>"']+/gi;
   let found;
   while ((found = urls.exec(text)) !== null) {
     const id = getMailListingId(found[0].replace(/[),.;]+$/, ''));
@@ -1432,13 +1474,11 @@ function extractListingMailExcerpt_(body, listingId) {
   for (let i = start + 1; i < occurrences.length; i++) {
     if (occurrences[i].id !== listingId) { end = occurrences[i].at; break; }
   }
-  // Kartenbeschreibung nur bis zur nächsten Leerzeile verwenden.
-  // Ohne klare Kartengrenze ist ausschließlich der konkrete Inseratslink sicher.
   const excerpt = text.slice(occurrences[start].at, Math.min(end, occurrences[start].at + 2500));
-  const separator = excerpt.search(/\r?\n[ \t]*\r?\n/);
+  const separator = excerpt.search(/\\r?\\n[ \\t]*\\r?\\n/);
   if (separator >= 0) return excerpt.slice(0, separator);
   if (occurrences.some(item => item.id !== listingId)) {
-    const firstLine = excerpt.search(/\r?\n/);
+    const firstLine = excerpt.search(/\\r?\\n/);
     return firstLine >= 0 ? excerpt.slice(0, firstLine) : excerpt;
   }
   return excerpt;
@@ -1451,7 +1491,7 @@ function filterListingDriveFiles_(files, listingId, allowUnassigned) {
     const owner = file.listing_id || getMailListingId(file.listing_url||'');
     if(owner)return owner === listingId;
     const name=String(file.name||'').toLowerCase();
-    if(/^(idealista|fotocasa|yaencontre|pisos|immoscout|milanuncios)_\d+_/.test(name))return name.startsWith(safePrefix);
+    if(/^(idealista|fotocasa|yaencontre|pisos|milanuncios)_\d+_/.test(name))return name.startsWith(safePrefix);
     return allowUnassigned;
   });
 }
