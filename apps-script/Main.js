@@ -18,7 +18,6 @@ const CONFIG = {
     idealista: extractIdealistaImages,
     yaencontre: extractYaencontreImages,
     pisos: extractPisosImages,
-    immoscout: extractImmoScoutImages,
     milanuncios: extractMilanunciosImages
   }
 };
