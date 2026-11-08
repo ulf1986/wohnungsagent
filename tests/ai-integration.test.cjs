@@ -73,9 +73,9 @@ test('Yaencontre digest keeps the title, price, size and rooms after repeated li
     '<'+url(112877530)+'?utm_content=cont-principal-link-inmueble-2>',
     '1.150 €/mes',
     '3 hab. | 91 m²'
-  ].join('\\n\\n');
+  ].join('\n\n');
   const first=x.ctx.extractListingMailExcerpt_(body,'yaencontre:112880475');
-  assert.match(first,/950 €\\/mes/);
+  assert.match(first,/950 €\/mes/);
   assert.match(first,/83 m²/);
   assert.match(first,/2 hab/);
   assert.match(first,/La Goleta/);
