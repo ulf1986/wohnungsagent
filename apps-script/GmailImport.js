@@ -73,7 +73,8 @@ function runGmailImagePipeline() {
     // User deletions must be honored before mail import and before any AI requests.
     runImageDiagnosticStage('marked_deletions', () => cleanupMarkedListings_(ss));
     // One-time, bounded local backfill from persisted Yaencontre mail cards.
-    runImageDiagnosticStage('historic_mail_facts', () => backfillYaencontreMailFacts_(ss, 6));
+    if (typeof backfillYaencontreMailFacts_ === 'function')
+      runImageDiagnosticStage('historic_mail_facts', () => backfillYaencontreMailFacts_(ss, 6));
     // Incremental index build: no OpenAI calls; bounded work per trigger.
     runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 6));
     runImageDiagnosticStage('duplicate_reconcile', () => reconcileExistingDuplicates_(ss));
