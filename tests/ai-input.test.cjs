@@ -17,6 +17,17 @@ function setup(){
   return {ctx,files,requests,logs,photo};
 }
 
+test('page metadata contributes labelled price and floor size without requiring JavaScript',()=>{
+  const x=setup();
+  const html='<html><head><meta itemprop="price" content="950"/>'+
+    '<meta itemprop="floorSize" content="72 m²"/></head><body></body></html>';
+  const previous=x.ctx.AI_PIPELINE; // constant is global lexical, not a ctx property
+  vm.runInContext('AI_PIPELINE.maxPageTextChars = 5000',x.ctx);
+  const text=x.ctx.compactListingPageText_(html);
+  assert.match(text,/price: 950/);
+  assert.match(text,/floorSize: 72 m²/);
+});
+
 test('combined text uses one request with separate clean bounded sources and full schema',()=>{
   const x=setup();
   x.ctx.callListingExtraction_({model:'test'},'email_and_page','Wohnung','<p>Mailpreis 1100</p>',
