@@ -37,6 +37,8 @@ const AI_PIPELINE = {
   maxMailTextChars: 10000,
   referenceAddress: 'Alameda Principal 3, 29001, Málaga, España',
   retryBaseMinutes: 30,
+  maxRetryAttempts: 3,
+  maxExpiryUpdatesPerRun: 25,
   processingTimeoutMinutes: 60,
   maxMailAgeHours: 48,
   timeBudgetMs: 180000,
@@ -63,6 +65,8 @@ function processNextAiListing(ss, queue, options) {
 
   const rows = queue.getRange(2, 1, queue.getLastRow() - 1, queue.getLastColumn()).getValues();
   const now = Date.now();
+  // Persist terminal state instead of leaving 48h-old queue jobs indefinitely pending/retry.
+  expireOldAiJobs_(queue, rows, index, qi, now);
   let target = null;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -72,7 +76,7 @@ function processNextAiListing(ss, queue, options) {
     if (!Number.isFinite(receivedAt) || receivedAt > now || now - receivedAt >= AI_PIPELINE.maxMailAgeHours * 3600000) continue;
     if (String(row[qi['Queue Bildstatus']] || '') !== AI_PIPELINE.statusReady) continue;
     const state = String(row[index.status] || 'pending');
-    if (state === 'completed' || state === 'duplicate' || state === 'blocked' || state === 'needs_review') continue;
+    if (['completed', 'duplicate', 'blocked', 'needs_review', 'failed_final', 'expired'].includes(state)) continue;
     const retryAt = Date.parse(String(row[index.retryAt] || ''));
     if (Number.isFinite(retryAt) && retryAt > now) continue;
     // Called only while the shared ScriptLock is held. A previous 'processing'
@@ -88,9 +92,8 @@ function processNextAiListing(ss, queue, options) {
   const links = parseJsonArray_(target.values[qi['Queue Inseratslinks JSON']]).map(canonicalListingUrl_).filter(Boolean);
   const ids = [...new Set(links.map(getMailListingId).filter(Boolean))];
   if (!ids.length) {
-    setAiQueueState_(queue, target.rowNumber, index, 'retry', 'Keine gültige Anzeigen-ID gefunden.',
-      new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
-    return { status: 'retry', reason: 'missing_listing_id' };
+    return scheduleAiRetry_(queue, target.rowNumber, index,
+      'Keine gültige Anzeigen-ID gefunden.', 'missing_listing_id');
   }
   const allFiles = parseJsonArray_(target.values[qi['Queue Drive-Dateien JSON']]);
   // Never send images from a different listing to the AI.
@@ -103,9 +106,8 @@ function processNextAiListing(ss, queue, options) {
     return !owner || !ids.includes(owner) ||
       !filterListingDriveFiles_([file], owner, false).length;
   })) {
-    setAiQueueState_(queue, target.rowNumber, index, 'retry', 'Mehrfachmail: Bildzuordnung ungeklärt.',
-      new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
-    return { status: 'retry', reason: 'ambiguous_images' };
+    return scheduleAiRetry_(queue, target.rowNumber, index,
+      'Mehrfachmail: Bildzuordnung ungeklärt.', 'ambiguous_images');
   }
   const done = parseJsonArray_(target.values[index.doneIds]);
   let activeId = String(target.values[index.activeId] || '').trim();
@@ -196,10 +198,10 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       // own visible mail card nor a confirmed listing page.
       if (!oneListing && !listingMailText.trim() &&
           (preflightPage.status !== 'ok' || !preflightPage.text)) {
-        setAiQueueState_(queue, rowNo, index, 'retry',
-          'Sammelmail: keine sichere Textquelle für Einzelanzeige.',
-          new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
-        return {status:'retry', reason:'missing_listing_source', listingId};
+        return Object.assign(
+          scheduleAiRetry_(queue, rowNo, index,
+            'Sammelmail: keine sichere Textquelle für Einzelanzeige.', 'missing_listing_source'),
+          {listingId});
       }
     }
     const listingRow = existingRow || appendListingRow_(sheet, cols, listingId, mailId, listingUrl, subject, q, qi, queueFiles);
@@ -226,10 +228,10 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
       catch (error) { page = { status: 'fetch_error', error: String(error.message || error) }; }
       if (listingCount > 1 && !listingMailText.trim() &&
           (page.status !== 'ok' || !page.text)) {
-        setAiQueueState_(queue, rowNo, index, 'retry',
-          'Sammelmail: keine sichere Textquelle für Einzelanzeige.',
-          new Date(Date.now() + AI_PIPELINE.retryBaseMinutes * 60000).toISOString());
-        return { status: 'retry', reason: 'missing_listing_source', listingId };
+        return Object.assign(
+          scheduleAiRetry_(queue, rowNo, index,
+            'Sammelmail: keine sichere Textquelle für Einzelanzeige.', 'missing_listing_source'),
+          {listingId});
       }
       beginAiApiOperation_(sheet, listingRow, cols, data, 'email_and_page', listingId);
       markAiQueueStep_(queue, rowNo, index, 'KI Text-API');
@@ -436,15 +438,58 @@ function processAiQueueRow_(ss, queue, target, qi, index) {
         status: 'needs_review', level: 'ERROR', error: message });
       return { status: 'needs_review', listingId, error: message };
     }
-    const attempt = Number(q[index.attempts] || 0) + 1;
-    const waitMinutes = Math.min(360, AI_PIPELINE.retryBaseMinutes * Math.pow(2, Math.min(attempt - 1, 4)));
-    const retryAt = new Date(Date.now() + waitMinutes * 60000).toISOString();
-    setAiQueueState_(queue, rowNo, index, 'retry', error.message, retryAt, attempt);
+    const outcome = scheduleAiRetry_(queue, rowNo, index, error.message, 'exception');
     console.error('KI-Verarbeitung ' + mailId + ': ' + error.message);
     logImageDiagnostic('ai_error', { mail_id: mailId, listing_id: listingId,
-      status: 'retry', level: 'ERROR', error: error.message });
-    return { status: 'retry', error: error.message };
+      status: outcome.status, level: 'ERROR', error: error.message });
+    return Object.assign(outcome, {listingId});
   }
+}
+
+/**
+ * Bounded, durable expiry sweep. Completed/blocked and needs_review stay untouched:
+ * an uncertain paid API operation must remain visible for manual reconciliation.
+ */
+function expireOldAiJobs_(queue, rows, index, qi, now) {
+  let changed = 0;
+  const deadline = AI_PIPELINE.maxMailAgeHours * 3600000;
+  for (let i = 0; i < rows.length && changed < AI_PIPELINE.maxExpiryUpdatesPerRun; i++) {
+    const row = rows[i];
+    if (String(row[qi['Queue Bildstatus']] || '') !== AI_PIPELINE.statusReady) continue;
+    const received = row[qi['Queue Eingang UTC']];
+    const receivedAt = received instanceof Date ? received.getTime() : Date.parse(String(received || ''));
+    if (!Number.isFinite(receivedAt) || receivedAt > now || now - receivedAt < deadline) continue;
+    const state = String(row[index.status] || 'pending');
+    if (['completed', 'blocked', 'duplicate', 'unavailable', 'needs_review',
+         'expired', 'failed_final'].includes(state)) continue;
+    const priorError = String(row[index.error] || '').trim();
+    setAiQueueState_(queue, i + 2, index, 'expired',
+      ('48-Stunden-Frist abgelaufen; kein weiterer KI-Aufruf.' +
+       (priorError ? ' Vorher: ' + priorError : '')).slice(0, 500), '');
+    logImageDiagnostic('ai_expired', {
+      mail_id: String(row[qi['Queue Gmail-ID']] || ''), status: 'expired'
+    });
+    changed++;
+  }
+  return changed;
+}
+
+/** A retry counts every actual retry decision, including deterministic digest errors. */
+function scheduleAiRetry_(queue, row, index, message, reason) {
+  const previous = Number(queue.getRange(row, index.attempts + 1).getValue() || 0);
+  const attempt = Math.max(0, previous) + 1;
+  const final = attempt >= AI_PIPELINE.maxRetryAttempts;
+  const minutes = Math.min(360, AI_PIPELINE.retryBaseMinutes *
+    Math.pow(2, Math.min(attempt - 1, 4)));
+  const retryAt = final ? '' : new Date(Date.now() + minutes * 60000).toISOString();
+  const status = final ? 'failed_final' : 'retry';
+  const detail = final ?
+    ('Endgültig nach ' + attempt + ' Fehlversuchen: ' + message) : message;
+  setAiQueueState_(queue, row, index, status, detail, retryAt, attempt);
+  logImageDiagnostic('ai_retry', {
+    row, status, count: attempt, reason: String(reason || 'unknown')
+  });
+  return { status, reason, attempts: attempt, retryAt, error: detail };
 }
 
 function ensureAiQueueColumns_(queue) {
