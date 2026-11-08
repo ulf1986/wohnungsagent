@@ -129,6 +129,19 @@ test('reconciliation retains source aliases and removes less complete duplicate 
   assert.equal(data.alternate_portals[0].id,'fotocasa:2');
   assert.equal(ctx.readDuplicateRegistry_(ss.getSheetByName('Duplikate')).length,2);
 });
+test('historical image backfill respects blocked photo matches',()=>{
+  const {ctx,ss}=setup([listing('fotocasa:2',['first-b','second-b'])]);
+  const registry=ctx.ensureDuplicateRegistry_(ss);
+  const photos=ctx.fingerprintListingFiles_([{file_id:'first-a'},{file_id:'second-a'}],3);
+  ctx.saveDuplicateRecord_(registry,'idealista:1','idealista:1','blocked',
+    photos,[{id:'idealista:1',url:'https://idealista.test/1'}],'Vom Nutzer gesperrt');
+  const result=ctx.backfillDuplicateRegistry_(ss,6);
+  assert.equal(result.matched,1);
+  const entries=ctx.readDuplicateRegistry_(registry);
+  assert.equal(entries.find(x=>x.id==='fotocasa:2').status,'blocked');
+  assert.equal(entries.find(x=>x.id==='fotocasa:2').canonical,'idealista:1');
+});
+
 test('user-marked rows are blocked before actual row removal',()=>{
   const {ctx,ss,sheet,block}=setup([listing('idealista:1',['first-a','second-a'])]);
   sheet.rows[1][header.indexOf('Zu löschen')]=true;
