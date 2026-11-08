@@ -27,11 +27,19 @@ function recoverRecentYaencontreMailImages_(ss) {
   const q=queue.getRange(2,base,n,Math.max(mid,time,links)-base+1).getValues();
   let cursor=Math.max(0,Math.min(n-1,Number(p.getProperty(key))||0)),checked=0;
   const now=Date.now();
+  const attemptKey='YA_RECENT_PHOTO_ATTEMPTS_V1';
+  let attempts={};
+  try{attempts=JSON.parse(p.getProperty(attemptKey)||'{}');}catch(_){}
+  // Keep at most the newest 48-hour worth of attempts.
+  attempts=Object.fromEntries(Object.entries(attempts)
+    .filter(([id,at])=>id&&Number.isFinite(Number(at))&&now-Number(at)<48*3600000)
+    .slice(-120));
   for(let k=0;k<n;k++){
     const i=(cursor+k)%n,values=q[i];
     const mailId=String(values[mid-base]||'').trim();
     const ts=Date.parse(String(values[time-base]||''));
     if(!mailId||!Number.isFinite(ts)||ts>now||now-ts>48*3600000)continue;
+    if(attempts[mailId] && now-attempts[mailId]<2*3600000)continue;
     let targets=[];
     try{
       const listingUrls=JSON.parse(String(values[links-base]||'[]'));
@@ -46,6 +54,8 @@ function recoverRecentYaencontreMailImages_(ss) {
     if(!pending.length)continue;
     // Mark attempted mail before Gmail access; malformed messages cannot loop.
     p.setProperty(key,String((i+1)%n));
+    attempts[mailId]=now;
+    p.setProperty(attemptKey,JSON.stringify(attempts));
     let mail;
     try{mail=GmailApp.getMessageById(mailId);}catch(_){
       logImageDiagnostic('ya_recent_images',{mail_id:mailId,status:'mail_unavailable'});return {mails:1,photos:0};
