@@ -10,7 +10,7 @@ test('compact listings shows only requested fields and keeps internal data intac
   const headers = [
     'Zu löschen', 'Wohnungsbewertung (0–100)', 'Preisbewertung (0–100)',
     'Miete pro m²', 'E-Mail-Eingang', 'Datensatz-ID', 'Vorschaubild',
-    'Miete', 'Fläche', 'Anzeigenlink', 'Mietart / Laufzeit',
+    'Miete', 'Fläche', 'Anzeigenlink', 'Titel', 'Mietart / Laufzeit',
     'Mietprüfung', 'Einschränkungen', 'Bildanalyse JSON'
   ];
   const hidden = new Set();
@@ -26,8 +26,9 @@ test('compact listings shows only requested fields and keeps internal data intac
   assert.equal(first.visible, 9);
   assert.equal(hidden.has(headers.indexOf('Bildanalyse JSON') + 1), true);
   assert.equal(hidden.has(headers.indexOf('Wohnungsbewertung (0–100)') + 1), true);
+  assert.equal(hidden.has(headers.indexOf('Anzeigenlink') + 1), true);
   for (const name of ['Miete', 'Fläche', 'Miete pro m²', 'Vorschaubild',
-                       'Anzeigenlink', 'Mietprüfung', 'Einschränkungen']) {
+                       'Titel', 'Mietprüfung', 'Einschränkungen']) {
     assert.equal(hidden.has(headers.indexOf(name) + 1), false, name);
   }
   assert.equal(context.apply(ss).changedGroups, 0);
