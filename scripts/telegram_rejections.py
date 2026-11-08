@@ -12,6 +12,7 @@ import re
 import sys
 
 from telegram_watchdog import gh_request, google_token, request_json, sheet_values, parse_time
+from urllib.parse import urlsplit, urlunsplit
 
 UTC = dt.timezone.utc
 STATE_TITLE = "[Wohnungsagent] Telegram-Ablehnungen Versandstatus"
@@ -56,15 +57,61 @@ def rejected_decisions(rows, now):
     return list(unique.values())
 
 
+
+def find_listing_url(listing_id, mail_id, queue_rows):
+    """Locate the actual property URL in the original imported mail, never a Gmail deep link."""
+    if ":" not in listing_id or not queue_rows:
+        return ""
+    provider, number = listing_id.split(":", 1)
+    allowed = {
+        "yaencontre": "yaencontre.com",
+        "idealista": "idealista.com",
+        "fotocasa": "fotocasa.es",
+        "pisos": "pisos.com",
+        "milanuncios": "milanuncios.com",
+        "immoscout": "is24.de",
+    }
+    domain = allowed.get(provider.lower())
+    if not domain or not number.isdigit():
+        return ""
+    header = {str(value).strip(): i for i, value in enumerate(queue_rows[0])}
+    mail_index = header.get("Queue Gmail-ID")
+    links_index = header.get("Queue Inseratslinks JSON")
+    if mail_index is None or links_index is None:
+        return ""
+    for row in queue_rows[1:]:
+        if mail_index >= len(row) or str(row[mail_index]).strip() != mail_id:
+            continue
+        if links_index >= len(row):
+            continue
+        try:
+            links = json.loads(row[links_index])
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(links, list):
+            continue
+        for link in links:
+            if not isinstance(link, str):
+                continue
+            parsed = urlsplit(link)
+            hostname = (parsed.hostname or "").lower()
+            if parsed.scheme != "https" or not (hostname == domain or hostname.endswith("." + domain)):
+                continue
+            # ID must appear in the property path, not merely in tracking parameters.
+            if re.search(r"(?<!\\d)" + re.escape(number) + r"(?!\\d)", parsed.path):
+                return urlunsplit(("https", parsed.netloc, parsed.path, "", ""))
+    return ""
+
+
 def message(item):
     provider = item["id"].split(":", 1)[0].capitalize()
     reason = re.sub(r"\s+", " ", item["reason"]).strip()
-    gmail_url = "https://mail.google.com/mail/u/0/#all/" + item["mail_id"]
+    listing_url = item.get("listing_url", "")
     return ("❌ <b>Wohnung ausgeschlossen</b>\n"
             + "Portal: " + html.escape(provider) + "\n"
             + "Inserat: <code>" + html.escape(item["id"]) + "</code>\n"
             + "Grund: " + html.escape(reason[:650]) + "\n"
-            + '<a href="' + html.escape(gmail_url, quote=True) + '">Original-E-Mail öffnen</a>')
+            + ('<a href="' + html.escape(listing_url, quote=True) + '">Inserat öffnen</a>'\n               if listing_url else "Inserat-Link nicht verfügbar"))
 
 
 def send(item):
@@ -114,6 +161,9 @@ def main():
     now = dt.datetime.now(UTC)
     decisions = sheet_values("Entscheidungen", "A1:H4000", google_token())
     events = rejected_decisions(decisions, now)
+    queue = sheet_values("Verarbeitung", "H1:L1500", google_token())
+    for event in events:
+        event["listing_url"] = find_listing_url(event["id"], event["mail_id"], queue)
     issue, sent = load_state()
     if issue is None:
         # First enablement must not spam historical/replayed decisions.
