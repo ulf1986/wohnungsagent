@@ -54,7 +54,7 @@ class PreliminaryLinkTests(unittest.TestCase):
                  "KI Datensatz-ID", "KI Wiederholung ab UTC", "KI Versuche",
                  "KI Abgeschlossene Anzeigen JSON", "KI Aktuelle Anzeigen-ID"],
                 ["ready_for_ai", "", "", "retry", "OpenAI HTTP 429",
-                 "idealista:1", "", "1", "[]", "idealista:1"],
+                 "", "idealista:1", "", "1", "[]", "idealista:1"],
                 ["ready_for_ai", "", "", "retry", "HTTP 429", "", "idealista:8", "", "1", "[]", "idealista:8"]],
             "'Sperrliste'!A2:A2000": [["idealista:2"]],
             "'Duplikate'!A2:C2000": [
