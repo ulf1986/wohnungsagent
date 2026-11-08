@@ -696,16 +696,16 @@ function recoverQuotedEssential_(text,field) {
   // Prefer explicitly labelled floor area over unlabelled dimensions of
   // recommended nearby properties or room sizes on the same page.
   const strong=field==='area_m2'
-    ? [/(?:superficie(?:\\s+(?:construida|útil))?|wohnfläche|fläche|tamaño|area|área)\\s*[:：-]?\\s*(\\d{2,3}(?:[.,]\\d{1,2})?)\\s*m(?:²|2|etros\\s+cuadrados)/gi,
-       /\\b(\\d{2,3}(?:[.,]\\d{1,2})?)\\s*m(?:²|2)\\s*(?:construidos?|útiles?|de superficie)\\b/gi]
-    : [/(?:alquiler|renta|precio|miete)\\s*[:：]?\\s*((?:\\d{1,2}[.,]\\d{3}|\\d{3,5}))\\s*€\\s*(?:\\/\\s*mes|mensuales?)?/gi];
+    ? [/(?:superficie(?:\s+(?:construida|útil))?|wohnfläche|fläche|tamaño|area|área)\s*[:：-]?\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2|etros\s+cuadrados)/gi,
+       /\b(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2)\s*(?:construidos?|útiles?|de superficie)\b/gi]
+    : [/(?:alquiler|renta|precio|miete)\s*[:：]?\s*((?:\d{1,2}[.,]\d{3}|\d{3,5}))\s*€\s*(?:\/\s*mes|mensuales?)?/gi];
   const weak=field==='rent_eur'
-    ? [/\\b((?:\\d{1,2}[.,]\\d{3}|\\d{3,5}))\\s*€\\s*(?:\\/\\s*mes|al\\s*mes|mensuales?)\\b/gi]
-    : [/\\b(\\d{2,3}(?:[.,]\\d{1,2})?)\\s*m(?:²|2)\\b/gi];
+    ? [/\b((?:\d{1,2}[.,]\d{3}|\d{3,5}))\s*€\s*(?:\/\s*mes|al\s*mes|mensuales?)\b/gi]
+    : [/\b(\d{2,3}(?:[.,]\d{1,2})?)\s*m(?:²|2)\b/gi];
   function unique(patterns) {
     const found=new Map();
     for(const re of patterns) for(const hit of source.matchAll(re)) {
-      const val=Number(hit[1].replace(/\\.(?=\\d{3}(?:\\D|$))/g,'').replace(',','.'));
+      const val=Number(hit[1].replace(/\.(?=\d{3}(?:\D|$))/g,'').replace(',','.'));
       if(!Number.isFinite(val)||(field==='rent_eur'?(val<350||val>4000):(val<20||val>350)))continue;
       if(!found.has(val))found.set(val,hit[0]);
     }
@@ -1433,10 +1433,10 @@ function mergeDriveFiles_(a,b) { const out=[]; const seen=new Set(); for(const x
  * placed AFTER the repeated image/thumbnail URLs. Never use adjacent card text.
  */
 function extractYaencontreMailCard_(body, listingId) {
-  if (!/^yaencontre:\\d+$/.test(listingId)) return '';
+  if (!/^yaencontre:\d+$/.test(listingId)) return '';
   const text=String(body||'');
   const matches=[];
-  const regex=/https?:\\/\\/[^\\s<>"']+/gi;
+  const regex=/https?:\/\/[^\s<>"']+/gi;
   let match;
   while ((match=regex.exec(text))!==null) {
     const url=match[0].replace(/[),.;>]+$/,'');
@@ -1451,21 +1451,21 @@ function extractYaencontreMailCard_(body, listingId) {
   const nextDifferent=matches.find(x=>x.id!==listingId&&x.at>marker.at);
   const start=Math.max(previousDifferent?previousDifferent.end:0,marker.at-350);
   let end=nextDifferent?nextDifferent.at:text.length;
-  const endMarker=/\\n(?:Más oportunidades|Ver similares|Descubre más|Darse de baja|Cancelar suscripción|unsubscribe)\\b/i;
+  const endMarker=/\n(?:Más oportunidades|Ver similares|Descubre más|Darse de baja|Cancelar suscripción|unsubscribe)\b/i;
   const remaining=text.slice(marker.end,end);
   const stop=endMarker.exec(remaining);
   if(stop)end=Math.min(end,marker.end+stop.index);
   if(end<=start)return '';
   const chunk=text.slice(start,Math.min(end,start+6500));
   const cleaned=chunk
-    .replace(/<?https?:\\/\\/[^\\s<>"']+>?/gi,' ')
-    .replace(/\\[image:[^\\]]*\\]/gi,' ')
-    .split(/\\r?\\n/)
+    .replace(/<?https?:\/\/[^\s<>"']+>?/gi,' ')
+    .replace(/\[image:[^\]]*\]/gi,' ')
+    .split(/\r?\n/)
     .map(line=>line.trim())
-    .filter(line=>line&&!/^(?:ver detalles|ver similares|hola|¡hola)\\b/i.test(line));
+    .filter(line=>line&&!/^(?:ver detalles|ver similares|hola|¡hola)\b/i.test(line));
   // Do not return a bare link or text without any visible housing facts.
-  const result=cleaned.join('\\n').slice(0,2100);
-  return /(?:\\d[\\d.,]*\\s*€|\\d+\\s*m[²2]|\\d+\\s*hab\\.?)/i.test(result)?result:'';
+  const result=cleaned.join('\n').slice(0,2100);
+  return /(?:\d[\d.,]*\s*€|\d+\s*m[²2]|\d+\s*hab\.?)/i.test(result)?result:'';
 }
 /** Separate the visible card of one listing from a multi-offer mail. */
 function extractListingMailExcerpt_(body, listingId) {
@@ -1473,7 +1473,7 @@ function extractListingMailExcerpt_(body, listingId) {
   if(yaCard)return yaCard;
   const text = String(body || '');
   const occurrences = [];
-  const urls = /https?:\\/\\/[^\\s<>"']+/gi;
+  const urls = /https?:\/\/[^\s<>"']+/gi;
   let found;
   while ((found = urls.exec(text)) !== null) {
     const id = getMailListingId(found[0].replace(/[),.;]+$/, ''));
@@ -1486,10 +1486,10 @@ function extractListingMailExcerpt_(body, listingId) {
     if (occurrences[i].id !== listingId) { end = occurrences[i].at; break; }
   }
   const excerpt = text.slice(occurrences[start].at, Math.min(end, occurrences[start].at + 2500));
-  const separator = excerpt.search(/\\r?\\n[ \\t]*\\r?\\n/);
+  const separator = excerpt.search(/\r?\n[ \t]*\r?\n/);
   if (separator >= 0) return excerpt.slice(0, separator);
   if (occurrences.some(item => item.id !== listingId)) {
-    const firstLine = excerpt.search(/\\r?\\n/);
+    const firstLine = excerpt.search(/\r?\n/);
     return firstLine >= 0 ? excerpt.slice(0, firstLine) : excerpt;
   }
   return excerpt;
