@@ -77,7 +77,8 @@ function runGmailImagePipeline() {
       runImageDiagnosticStage('historic_mail_facts', () => backfillYaencontreMailFacts_(ss, 6));
     // Incremental index build: no OpenAI calls; bounded work per trigger.
     runImageDiagnosticStage('duplicate_backfill', () => backfillDuplicateRegistry_(ss, 6));
-    runImageDiagnosticStage('duplicate_text_candidates', () => detectTextDuplicateCandidates_(ss, 10));
+    if (typeof detectTextDuplicateCandidates_ === 'function')
+      runImageDiagnosticStage('duplicate_text_candidates', () => detectTextDuplicateCandidates_(ss, 10));
     runImageDiagnosticStage('duplicate_reconcile', () => reconcileExistingDuplicates_(ss));
     runImageDiagnosticStage('rescore_existing', () => recalculateExistingListingScores_(ss, 10));
     // Expensive recovery is deliberately excluded from the 5-minute Gmail trigger.
