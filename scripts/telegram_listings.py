@@ -19,7 +19,7 @@ import urllib.error
 from telegram_watchdog import SHEET_ID, request_json, google_token, gh_request, parse_time
 
 STATE_TITLE = "[Wohnungsagent] Telegram-Anzeigen Versandstatus"
-MAX_PER_RUN = 6
+MAX_PER_RUN = 20
 UTC = dt.timezone.utc
 
 def cells():
