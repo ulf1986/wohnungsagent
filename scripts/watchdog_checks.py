@@ -6,11 +6,13 @@ recent arrivals, so historical backlog does not suddenly flood Telegram.
 import datetime as dt
 import json
 import re
+from zoneinfo import ZoneInfo
 
 UTC = dt.timezone.utc
 TERMINAL_MAIL = {"blocked", "duplicate", "completed"}
 TERMINAL_AI = {"completed", "duplicate", "blocked", "unavailable", "failed_final", "expired"}
 MONITORING_START = dt.datetime(2026, 11, 6, tzinfo=UTC)
+MALAGA = ZoneInfo("Europe/Madrid")
 # No expiry for unresolved work created after monitoring activation.
 
 
@@ -249,4 +251,38 @@ def inspect(queues, listings, decisions, sent_ids, now, gmail_messages=None):
                 alerts.append(problem("DUPLICATE_MAPPING", string(event, "Datensatz-ID") or "unknown",
                                       "Duplikat ohne Haupteintrag-ID dokumentiert.", "warning"))
 
+    # Correlate each incident to its original email. The alert identity may be a
+    # listing ID, while a single digest may contain multiple listings.
+    receipt_by_mail = {
+        string(row, "Queue Gmail-ID"): timestamp(row.get("Queue Eingang UTC"))
+        for row in rows if string(row, "Queue Gmail-ID")
+    }
+    receipt_by_listing = {}
+    for row in rows:
+        received = timestamp(row.get("Queue Eingang UTC"))
+        if not received:
+            continue
+        ids = [string(row, "KI Aktuelle Anzeigen-ID"), string(row, "KI Datensatz-ID")]
+        ids.extend(json_value(string(row, "KI Abgeschlossene Anzeigen JSON"), []))
+        for listing_id in ids:
+            if listing_id:
+                old = receipt_by_listing.get(listing_id)
+                if old is None or received < old:
+                    receipt_by_listing[listing_id] = received
+    for row in homes.values():
+        listing_id = string(row, "Datensatz-ID")
+        received = timestamp(row.get("Eingang (UTC)"))
+        if received and listing_id not in receipt_by_listing:
+            receipt_by_listing[listing_id] = received
+    gmail_receipts = {
+        str(message.get("id", "")): timestamp(message.get("received"))
+        for message in (gmail_messages or [])
+    }
+    for alert in alerts:
+        identity = alert["key"].split(":", 1)[-1]
+        received = (receipt_by_mail.get(identity) or
+                    receipt_by_listing.get(identity) or
+                    gmail_receipts.get(identity))
+        if received:
+            alert["mail_received"] = received.astimezone(MALAGA).strftime("%d.%m.%Y %H:%M")
     return list({a["key"]: a for a in alerts}.values())
