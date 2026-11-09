@@ -220,7 +220,8 @@ def send_early(candidate):
         html.escape(candidate["subject"][:100]),
         ("E-Mail eingegangen: " + malaga_receipt(candidate.get("received")) if candidate.get("received") else ""),
         "",
-        "Die automatische Prüfung war beim ersten Versuch unvollständig.",
+        "Automatische KI-Prüfung endgültig nicht abgeschlossen.",
+        ("Fehler: " + html.escape(candidate.get("error", "")[:220]) if candidate.get("error") else ""),
         ("Fläche: " + str(int(candidate["area"])) + " m²" if candidate.get("area") is not None else "Fläche: noch unbekannt"),
         ("Miete: " + str(int(candidate["rent"])) + " €/Monat" if candidate.get("rent") is not None else "Miete: noch unbekannt"),
         "Bitte vor Kontaktaufnahme selbst prüfen.",
@@ -339,6 +340,154 @@ def send(row):
     if not response.get("ok"):
         raise RuntimeError("Telegram hat die Nachricht abgelehnt")
 
+
+def reviewable_completed(row):
+    """Completed AI screening with unresolved facts; do not suppress the user alert.
+
+    Never represent these as fully eligible, and never notify a known exclusion.
+    """
+    if text(row, "KI-Bewertung").lower() != "abgeschlossen":
+        return False
+    if not text(row, "Datensatz-ID") or not text(row, "Anzeigenlink"):
+        return False
+    if hard_excluded(row):
+        return False
+    return not eligible(row)
+
+
+def review_card(row):
+    """Cautious outcome for completed but inconclusive AI evaluation."""
+    url = clean_listing_url(text(row, "Anzeigenlink"))
+    if not url:
+        raise ValueError("Kein sicherer Inseratslink")
+    facts = screened_facts(row)
+    lines = ["🔎 <b>KI-Prüfung abgeschlossen: Manuell prüfen</b>",
+             "Inserat: " + html.escape(text(row, "Datensatz-ID"))]
+    received = malaga_receipt(text(row, "Eingang (UTC)"))
+    if received:
+        lines.append("E-Mail eingegangen: " + received)
+    rent, area, rooms = facts["rent"], facts["area"], facts["rooms"]
+    lines += [
+        ("Miete: " + f"{rent:g} €/Monat" if rent is not None else "Miete: unbekannt"),
+        ("Fläche: " + f"{area:g} m²" if area is not None else "Fläche: unbekannt"),
+        ("Zimmer: " + f"{rooms:g}" if rooms is not None else "Zimmer: unbekannt"),
+    ]
+    constraints = text(row, "Mietprüfung")
+    if constraints:
+        lines.append("Offen: " + html.escape(constraints[:240]))
+    lines.extend(["Keine bestätigte Eignung. Fehlende Angaben vor Kontaktaufnahme prüfen.",
+                  '<a href="' + html.escape(url, quote=True) + '">Inserat öffnen</a>'])
+    return "\n".join(lines)
+
+
+def clean_listing_url(url):
+    parsed = urllib.parse.urlsplit(str(url or ""))
+    host = (parsed.hostname or "").lower()
+    allowed = ("idealista.com", "yaencontre.com", "fotocasa.es",
+               "pisos.com", "milanuncios.com")
+    if parsed.scheme != "https" or not any(
+            host == domain or host.endswith("." + domain) for domain in allowed):
+        return ""
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def send_review(row):
+    """Notify via the same Telegram transport as the full AI success card."""
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        raise RuntimeError("Telegram Secrets fehlen")
+    result = request_json("https://api.telegram.org/bot" + token + "/sendMessage",
+                          method="POST",
+                          body={"chat_id": chat, "text": review_card(row),
+                                "parse_mode": "HTML", "disable_web_page_preview": True,
+                                "disable_notification": False})
+    if not result.get("ok"):
+        raise RuntimeError("Telegram hat die manuelle Prüfung abgelehnt")
+
+
+def terminal_failure_candidates(now, seen, current):
+    """Per-property terminal failures, including digests; not transient retries.
+
+    Correlate individual listing decisions before falling back to mail-wide
+    terminal status. A successful/excluded sibling cannot be reported as failed.
+    """
+    queue_rows = sheet_matrix("'Verarbeitung'!H1:Y4000")
+    decision_rows = sheet_matrix("'Entscheidungen'!A1:H10000")
+    blocked_rows = sheet_matrix("'Sperrliste'!A2:A4000")
+    duplicate_rows = sheet_matrix("'Duplikate'!A2:C4000")
+    forbidden = {str(row[0]).lower().strip() for row in blocked_rows if row and row[0]}
+    duplicate_states = {
+        str(row[0]).lower().strip(): str(row[2]).lower().strip()
+        for row in duplicate_rows if len(row) > 2 and row[0]
+    }
+    # Keep only the latest decision for a given property, not its Gmail row.
+    latest = {}
+    for d in decision_rows[1:]:
+        if len(d) < 6 or not d[4] or str(d[2]).lower() != "ki":
+            continue
+        instant = parse_time(d[0])
+        if instant and (d[4] not in latest or instant >= latest[d[4]][0]):
+            latest[d[4]] = (instant, str(d[5]).lower(), str(d[6]) if len(d) > 6 else "")
+    headers = {str(v): i for i, v in enumerate(queue_rows[0])} if queue_rows else {}
+    needed = ("Queue Eingang UTC", "Queue Gmail-ID", "Queue Betreff",
+              "Queue Inseratslinks JSON", "KI Verarbeitungsstatus",
+              "KI Fehler", "KI Datensatz-ID", "KI Aktuelle Anzeigen-ID")
+    if not all(v in headers for v in needed):
+        return []
+    candidates = {}
+    cutoff = now - dt.timedelta(hours=48)
+    terminal = {"failed_final", "expired", "needs_review", "unavailable"}
+    ignored = {"completed", "blocked", "duplicate", "excluded", "unavailable", "no_images"}
+    for row in queue_rows[1:]:
+        def field(name):
+            i = headers[name]
+            return str(row[i]) if i < len(row) else ""
+        received = parse_time(field("Queue Eingang UTC"))
+        if not received or not cutoff <= received <= now:
+            continue
+        state = field("KI Verarbeitungsstatus").lower()
+        if state not in terminal:
+            continue
+        try:
+            links = json.loads(field("Queue Inseratslinks JSON") or "[]")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(links, list):
+            continue
+        owner = field("KI Aktuelle Anzeigen-ID") or field("KI Datensatz-ID")
+        for url in links:
+            listing_id = preliminary_listing_id(url)
+            if not listing_id or listing_id in seen or listing_id.lower() in forbidden:
+                continue
+            if duplicate_states.get(listing_id.lower()) in ("blocked", "duplicate", "candidate"):
+                continue
+            entry = current.get(listing_id)
+            if entry and (hard_excluded(entry) or text(entry, "KI-Bewertung").lower() == "abgeschlossen"):
+                continue
+            individual = latest.get(listing_id)
+            if individual and individual[1] in ignored:
+                continue
+            # A digest failure applies to its unresolved siblings only. A later
+            # successful decision must always override the older mail status.
+            if individual and individual[1] not in terminal and listing_id != owner:
+                continue
+            # If a specific listing is marked retry, the other members are not
+            # automatically final failures unless the mail is terminal.
+            reason = individual[2] if individual and individual[1] in terminal else field("KI Fehler")
+            clean = clean_listing_url(url)
+            if not clean:
+                continue
+            if listing_id not in candidates:
+                candidates[listing_id] = {
+                    "id": listing_id, "url": clean,
+                    "received": received, "subject": field("Queue Betreff"),
+                    "error": reason[:240] or "Automatische Prüfung nicht abgeschlossen.",
+                    "status": state,
+                    "rent": screened_facts(entry)["rent"],
+                    "area": screened_facts(entry)["area"]
+                }
+    return sorted(candidates.values(), key=lambda x: (x["received"], x["id"]))
+
 def issue_body(ids):
     return ("Automatisch verwaltete Versandhistorie. Bitte nicht bearbeiten.\n\n"
             + "```json\n" + json.dumps({"version":1, "sent":sorted(ids)},
@@ -379,26 +528,34 @@ def main():
 
     current = {text(r, "Datensatz-ID"): r for r in listings if text(r, "Datensatz-ID")}
     delivered = 0
-    preliminary = early_candidates(now, seen, current)
-    for item in preliminary[:MAX_PER_RUN]:
+    # Completed evaluations always win over the provisional error fallback.
+    # Missing optional facts are reported explicitly, never silently discarded.
+    pending = [r for r in listings if (eligible(r) or reviewable_completed(r)) and
+               text(r, "Datensatz-ID") not in seen and
+               (listing_time(r) is None or
+                listing_time(r) >= now - dt.timedelta(hours=48))]
+    pending.sort(key=lambda r: (listing_time(r) or now, text(r, "Datensatz-ID")))
+    for row in pending[:MAX_PER_RUN]:
+        listing_id = text(row, "Datensatz-ID")
+        if eligible(row):
+            send(row)
+        else:
+            send_review(row)
+        seen.add(listing_id)
+        save(issue, seen)
+        delivered += 1
+        print("Telegram KI-Ergebnis gesendet für", listing_id)
+
+    # Only terminal failures (never an in-progress or scheduled retry).
+    fallback = terminal_failure_candidates(now, seen, current)
+    for item in fallback[:max(0, MAX_PER_RUN - delivered)]:
         send_early(item)
         seen.add(item["id"])
         save(issue, seen)
         delivered += 1
-        print("Telegram-Sofortlink gesendet für", item["id"])
-
-    pending = [r for r in listings if eligible(r) and
-               text(r, "Datensatz-ID") not in seen]
-    pending.sort(key=lambda r: (listing_time(r) or now, text(r, "Datensatz-ID")))
-    for row in pending[:max(0, MAX_PER_RUN - delivered)]:
-        listing_id = text(row, "Datensatz-ID")
-        send(row)
-        seen.add(listing_id)
-        save(issue, seen)
-        delivered += 1
-        print("Telegram-Nachricht gesendet für", listing_id)
-    print(f"Geprüfte Anzeigen: {len(listings)}; Sofortlinks: {len(preliminary)}; "
-          f"offene vollständige Bewertungen: {len(pending)}; gesendet: {delivered}.")
+        print("Telegram manuelle KI-Fehlerprüfung gesendet für", item["id"])
+    print(f"Geprüfte Anzeigen: {len(listings)}; offene KI-Ergebnisse: {len(pending)}; "
+          f"endgültige Fehler: {len(fallback)}; gesendet: {delivered}.")
     return 0
 
 if __name__ == "__main__":
