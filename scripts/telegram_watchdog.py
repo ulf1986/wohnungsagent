@@ -159,9 +159,9 @@ def is_property_search_notice(subject):
                           "nuevos inmuebles", "🏠 "))
         or "suchauftrag" in value
         or "nuevos pisos" in value
-        or bool(re.match(r"^\\d+ oportunidades en tu búsqueda", value))
-        or bool(re.match(r"^\\d+ (?:viviendas|pisos) recién publicados", value))
-        or bool(re.match(r"^[^,]+, tienes \\d+ novedades? en alquiler", value))
+        or bool(re.match(r"^\d+ oportunidades en tu búsqueda", value))
+        or bool(re.match(r"^\d+ (?:viviendas|pisos) recién publicados", value))
+        or bool(re.match(r"^[^,]+, tienes \d+ novedades? en alquiler", value))
     )
 
 
