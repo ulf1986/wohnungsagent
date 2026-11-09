@@ -220,7 +220,7 @@ def send_early(candidate):
         html.escape(candidate["subject"][:100]),
         ("E-Mail eingegangen: " + malaga_receipt(candidate.get("received")) if candidate.get("received") else ""),
         "",
-        "Automatische KI-Prüfung endgültig nicht abgeschlossen.",
+        "Automatische KI-Prüfung unvollständig und endgültig nicht abgeschlossen.",
         ("Fehler: " + html.escape(candidate.get("error", "")[:220]) if candidate.get("error") else ""),
         ("Fläche: " + str(int(candidate["area"])) + " m²" if candidate.get("area") is not None else "Fläche: noch unbekannt"),
         ("Miete: " + str(int(candidate["rent"])) + " €/Monat" if candidate.get("rent") is not None else "Miete: noch unbekannt"),
@@ -527,11 +527,19 @@ def main():
         print("Versandhistorie erstmalig initialisiert.")
 
     current = {text(r, "Datensatz-ID"): r for r in listings if text(r, "Datensatz-ID")}
+    blocked = sheet_matrix("'Sperrliste'!A2:A4000")
+    duplicate_rows = sheet_matrix("'Duplikate'!A2:C4000")
+    forbidden = {str(r[0]).strip().lower() for r in blocked if r and r[0]}
+    duplicates = {str(r[0]).strip().lower() for r in duplicate_rows
+                  if len(r) > 2 and str(r[2]).strip().lower() in
+                  ("blocked", "duplicate", "candidate")}
     delivered = 0
     # Completed evaluations always win over the provisional error fallback.
     # Missing optional facts are reported explicitly, never silently discarded.
     pending = [r for r in listings if (eligible(r) or reviewable_completed(r)) and
                text(r, "Datensatz-ID") not in seen and
+               text(r, "Datensatz-ID").lower() not in forbidden and
+               text(r, "Datensatz-ID").lower() not in duplicates and
                (listing_time(r) is None or
                 listing_time(r) >= now - dt.timedelta(hours=48))]
     pending.sort(key=lambda r: (listing_time(r) or now, text(r, "Datensatz-ID")))
