@@ -10,6 +10,7 @@ import json
 import re
 import os
 import sys
+from zoneinfo import ZoneInfo
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -148,6 +149,22 @@ def gmail_refresh_token():
         raise RuntimeError(f"Gmail OAuth HTTP {error.code}") from None
 
 
+
+def is_property_search_notice(subject):
+    """Recognize actual saved-search alerts, but not replies or contact messages."""
+    value = str(subject or "").strip().lower()
+    return (
+        value.startswith(("¡nuevo piso", "nuevo ·", "¿te lo perdiste?",
+                          "⌂ nuevo", "⌂ se han publicado", "¡bajada de precio",
+                          "nuevos inmuebles", "🏠 "))
+        or "suchauftrag" in value
+        or "nuevos pisos" in value
+        or bool(re.match(r"^\\d+ oportunidades en tu búsqueda", value))
+        or bool(re.match(r"^\\d+ (?:viviendas|pisos) recién publicados", value))
+        or bool(re.match(r"^[^,]+, tienes \\d+ novedades? en alquiler", value))
+    )
+
+
 def gmail_messages():
     """OAuth read-only reconciliation, including already trashed alerts."""
     token = gmail_refresh_token()
@@ -176,9 +193,7 @@ def gmail_messages():
                                          "yaencontre.com", "milanuncios.com",
                                          "immobilienscout24.de")):
             continue
-        if not (subject.startswith("¡Nuevo piso") or subject.startswith("Nuevo ") or
-                "Suchauftrag" in subject or "Nuevos inmuebles" in subject or
-                "nuevos pisos" in subject.lower()):
+        if not is_property_search_notice(subject):
             continue
         received = dt.datetime.fromtimestamp(int(meta["internalDate"]) / 1000, UTC)
         result.append({"id": mail_id, "received": received.isoformat()})
@@ -246,7 +261,8 @@ def handle_incidents(alerts, now, known_mail_ids=None):
                 if mail_id not in known_mail_ids:
                     active[key] = {"key": key, "code": "MAIL_NOT_IMPORTED",
                                    "severity": old.get("severity", "critical"),
-                                   "detail": old.get("detail", "Mail weiterhin nicht importiert.")}
+                                   "detail": old.get("detail", "Mail weiterhin nicht importiert."),
+                                   "mail_received": old.get("mail_received")}
     # New critical incidents go out immediately on the next watchdog run.
     # Existing incidents are summarized every four hours rather than individually.
     notifications = []
@@ -264,9 +280,14 @@ def handle_incidents(alerts, now, known_mail_ids=None):
             bucket["count"] += 1
             bucket["critical"] |= alert["severity"] == "critical"
             if len(bucket["examples"]) < 2:
-                bucket["examples"].append(alert["detail"])
+                received = alert.get("mail_received")
+                example = alert["detail"]
+                if received:
+                    example += "\n    E-Mail eingegangen: " + received + " Uhr (Málaga)"
+                bucket["examples"].append(example)
         lines = ["🚨 Wohnungsagent: " + str(len(notifications)) +
-                 " neue oder weiterhin bestehende Störungen"]
+                 " neue oder weiterhin bestehende Störungen",
+                 "Prüfung: " + now.astimezone(ZoneInfo("Europe/Madrid")).strftime("%d.%m.%Y %H:%M") + " Uhr (Málaga)"]
         for name, bucket in sorted(categories.items(), key=lambda item:
                                    (not item[1]["critical"], item[0])):
             lines.append(("❗ " if bucket["critical"] else "⚠️ ") +
@@ -285,6 +306,7 @@ def handle_incidents(alerts, now, known_mail_ids=None):
         old = previous.get(key, {})
         next_state[key] = {
             "severity": alert["severity"], "detail": alert["detail"],
+            "mail_received": alert.get("mail_received") or old.get("mail_received"),
             "first_seen": old.get("first_seen") or now.isoformat(),
             "notified_at": now.isoformat() if alert in notifications else old.get("notified_at")
         }
