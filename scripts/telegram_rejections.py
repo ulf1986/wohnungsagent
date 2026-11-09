@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+from zoneinfo import ZoneInfo
 
 from telegram_watchdog import gh_request, google_token, request_json, sheet_values, parse_time
 from urllib.parse import urlsplit, urlunsplit
@@ -102,13 +103,34 @@ def find_listing_url(listing_id, mail_id, queue_rows):
     return ""
 
 
+def mail_received_for_id(mail_id, queue_rows):
+    """Original Gmail receipt timestamp from the queue, not AI decision time."""
+    if not mail_id or not queue_rows:
+        return None
+    header = {str(v).strip(): i for i, v in enumerate(queue_rows[0])}
+    id_col, date_col = header.get("Queue Gmail-ID"), header.get("Queue Eingang UTC")
+    if id_col is None or date_col is None:
+        return None
+    for row in queue_rows[1:]:
+        if len(row) > max(id_col, date_col) and str(row[id_col]).strip() == mail_id:
+            return parse_time(row[date_col])
+    return None
+
+
+def received_label(value):
+    return (value.astimezone(ZoneInfo("Europe/Madrid")).strftime("%d.%m.%Y %H:%M")
+            + " Uhr (Málaga)") if value else ""
+
+
 def message(item):
     provider = item["id"].split(":", 1)[0].capitalize()
     reason = re.sub(r"\s+", " ", item["reason"]).strip()
     listing_url = item.get("listing_url", "")
+    received = received_label(item.get("mail_received"))
     return ("❌ <b>Wohnung ausgeschlossen</b>\n"
             + "Portal: " + html.escape(provider) + "\n"
             + "Inserat: <code>" + html.escape(item["id"]) + "</code>\n"
+            + ("E-Mail eingegangen: " + received + "\n" if received else "")
             + "Grund: " + html.escape(reason[:650]) + "\n"
             + ('<a href="' + html.escape(listing_url, quote=True) + '">Inserat öffnen</a>'
                if listing_url else "Inserat-Link nicht verfügbar"))
@@ -164,6 +186,7 @@ def main():
     queue = sheet_values("Verarbeitung", "H1:L1500", google_token())
     for event in events:
         event["listing_url"] = find_listing_url(event["id"], event["mail_id"], queue)
+        event["mail_received"] = mail_received_for_id(event["mail_id"], queue)
     issue, sent = load_state()
     if issue is None:
         # First enablement must not spam historical/replayed decisions.
