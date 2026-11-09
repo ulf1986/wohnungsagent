@@ -172,8 +172,7 @@ def gmail_messages():
         return None
     headers = {"Authorization": "Bearer " + token}
     query = ('in:anywhere newer_than:6h '
-             '{label:"Wohnungssuche/Suchaufträge" '
-             'subject:"¡Nuevo piso en tu búsqueda" subject:"Nuevo · Piso"}')
+             '{label:"Wohnungssuche/Suchaufträge" from:(fotocasa.es)}')
     url = ("https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=300&q=" +
            urllib.parse.quote(query))
     response = request_json(url, headers=headers)
