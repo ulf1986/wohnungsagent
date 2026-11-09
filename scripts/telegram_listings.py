@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+from zoneinfo import ZoneInfo
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -217,6 +218,7 @@ def send_early(candidate):
         "🔎 <b>Wohnungsanzeige: Manuell prüfen</b>",
         html.escape(candidate["id"]),
         html.escape(candidate["subject"][:100]),
+        ("E-Mail eingegangen: " + malaga_receipt(candidate.get("received")) if candidate.get("received") else ""),
         "",
         "Die automatische Prüfung war beim ersten Versuch unvollständig.",
         ("Fläche: " + str(int(candidate["area"])) + " m²" if candidate.get("area") is not None else "Fläche: noch unbekannt"),
@@ -266,6 +268,13 @@ def eligible(row):
 def listing_time(row):
     return parse_time(text(row, "Eingang (UTC)"))
 
+def malaga_receipt(value):
+    parsed = parse_time(value)
+    if not parsed:
+        return ""
+    return parsed.astimezone(ZoneInfo("Europe/Madrid")).strftime("%d.%m.%Y %H:%M") + " Uhr (Málaga)"
+
+
 def source_photo(row):
     try:
         data = json.loads(text(row, "Bildanalyse JSON") or "{}")
@@ -295,6 +304,9 @@ def card(row):
         raise ValueError("Miete oder Fläche fehlt")
     lines = ["🏠 <b>Wohnungsangebot</b>",
              f"{area:g} m² · {rent:g} €/Monat · {rent / area:.2f} €/m²"]
+    received = malaga_receipt(text(row, "Eingang (UTC)"))
+    if received:
+        lines.append("E-Mail eingegangen: " + received)
     restrictions = text(row, "Einschränkungen")
     conditions = text(row, "Mietprüfung")
     if restrictions:
