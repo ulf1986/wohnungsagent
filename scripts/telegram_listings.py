@@ -257,7 +257,7 @@ def number(value):
 def eligible(row):
     if text(row, "Zu löschen").lower() in ("true", "ja", "yes", "1"):
         return False
-    if text(row, "Status").lower() not in ("geeignet", "prüfung erforderlich"):
+    if text(row, "Status").lower() != "geeignet":
         return False
     if text(row, "KI-Bewertung").lower() != "abgeschlossen":
         return False
@@ -303,11 +303,15 @@ def card(row):
     area = number(text(row, "Fläche"))
     if not rent or not area:
         raise ValueError("Miete oder Fläche fehlt")
-    lines = ["🏠 <b>Wohnungsangebot</b>",
+    lines = ["🏠 <b>KI-Ergebnis: Geeignet</b>",
+             "Inserat: " + html.escape(text(row, "Datensatz-ID")),
              f"{area:g} m² · {rent:g} €/Monat · {rent / area:.2f} €/m²"]
     received = malaga_receipt(text(row, "Eingang (UTC)"))
     if received:
         lines.append("E-Mail eingegangen: " + received)
+    summary = text(row, "Zusammenfassung")
+    if summary:
+        lines.append("Bewertung: " + html.escape(summary[:240]))
     restrictions = text(row, "Einschränkungen")
     conditions = text(row, "Mietprüfung")
     if restrictions:
@@ -372,6 +376,9 @@ def review_card(row):
         ("Fläche: " + f"{area:g} m²" if area is not None else "Fläche: unbekannt"),
         ("Zimmer: " + f"{rooms:g}" if rooms is not None else "Zimmer: unbekannt"),
     ]
+    summary = text(row, "Zusammenfassung")
+    if summary:
+        lines.append("KI-Bewertung: " + html.escape(summary[:240]))
     constraints = text(row, "Mietprüfung")
     if constraints:
         lines.append("Offen: " + html.escape(constraints[:240]))
@@ -459,7 +466,7 @@ def terminal_failure_candidates(now, seen, current):
             listing_id = preliminary_listing_id(url)
             if not listing_id or listing_id in seen or listing_id.lower() in forbidden:
                 continue
-            if duplicate_states.get(listing_id.lower()) in ("blocked", "duplicate", "candidate"):
+            if duplicate_states.get(listing_id.lower()) in ("blocked", "duplicate"):
                 continue
             entry = current.get(listing_id)
             if entry and (hard_excluded(entry) or text(entry, "KI-Bewertung").lower() == "abgeschlossen"):
@@ -532,7 +539,7 @@ def main():
     forbidden = {str(r[0]).strip().lower() for r in blocked if r and r[0]}
     duplicates = {str(r[0]).strip().lower() for r in duplicate_rows
                   if len(r) > 2 and str(r[2]).strip().lower() in
-                  ("blocked", "duplicate", "candidate")}
+                  ("blocked", "duplicate")}
     delivered = 0
     # Completed evaluations always win over the provisional error fallback.
     # Missing optional facts are reported explicitly, never silently discarded.
