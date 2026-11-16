@@ -31,5 +31,6 @@ test('Telegram displays only wanted rental facts and link', () => {
   assert.match(card, /rent \/ area/);
   assert.match(card, /Einschränkungen/);
   assert.match(card, /Inserat öffnen/);
-  assert.doesNotMatch(card, /Wohnungsbewertung|Preisbewertung|Zusammenfassung/);
+  assert.doesNotMatch(card, /Wohnungsbewertung|Preisbewertung/);
+  assert.match(card, /Zusammenfassung/);
 });
