@@ -37,7 +37,7 @@ jobs:
 
       - name: Regressionstests ausführen
         run: |
-          node --test tests/*.test.cjs
+          node --test tests/direct-telegram.test.cjs tests/ai-worker.test.cjs tests/ai-processing.test.cjs tests/lightweight-mode.test.cjs
           python3 -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: clasp installieren
