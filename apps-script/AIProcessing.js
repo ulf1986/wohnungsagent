@@ -70,12 +70,13 @@ function chooseAiQueueTarget_(rows, qi, index, now, advanceFairness) {
   const byAge = (a,b) => a.receivedAt-b.receivedAt || a.rowNumber-b.rowNumber;
   fresh.sort(byAge);
   retries.sort(byAge);
-  const props = PropertiesService.getScriptProperties();
+  const props = typeof PropertiesService === 'undefined' ? null :
+    PropertiesService.getScriptProperties();
   const key = 'WOHNUNGSAGENT_AI_FRESH_STREAK';
-  const streak = Math.max(0, Number(props.getProperty(key)) || 0);
+  const streak = Math.max(0, Number(props && props.getProperty(key)) || 0);
   const useRetry = retries.length && (!fresh.length || streak >= 4);
   const selected = useRetry ? retries[0] : fresh[0];
-  if (advanceFairness && selected) {
+  if (advanceFairness && selected && props) {
     props.setProperty(key, String(useRetry || !retries.length ? 0 : streak+1));
   }
   return selected || null;
