@@ -76,7 +76,8 @@ function chooseAiQueueTarget_(rows, qi, index, now, advanceFairness) {
   const streak = Math.max(0, Number(props && props.getProperty(key)) || 0);
   const useRetry = retries.length && (!fresh.length || streak >= 4);
   const selected = useRetry ? retries[0] : fresh[0];
-  if (advanceFairness && selected && props) {
+  if (advanceFairness && selected && props &&
+      typeof props.setProperty === 'function') {
     props.setProperty(key, String(useRetry || !retries.length ? 0 : streak+1));
   }
   return selected || null;
