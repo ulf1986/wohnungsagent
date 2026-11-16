@@ -1,13 +1,6 @@
-name: Apps Script – Deploy
+name: Apps Script – manueller Deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps-script/**'
-      - 'scripts/telegram_listings.py'
-      - 'tests/**'
-      - '.github/workflows/deploy-apps-script.yml'
   workflow_dispatch:
     inputs:
       confirmation:
@@ -24,7 +17,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ github.event_name == 'push' || inputs.confirmation == 'DEPLOY' }}
+    if: ${{ inputs.confirmation == 'DEPLOY' }}
     runs-on: ubuntu-latest
     steps:
       - name: Repository laden
