@@ -23,7 +23,7 @@ MAX_PER_RUN = 20
 UTC = dt.timezone.utc
 
 def cells():
-    encoded = urllib.parse.quote("'Anzeigen'!A1:AO4000", safe="")
+    encoded = urllib.parse.quote("'Anzeigen'!A1:AZ4000", safe="")
     result = request_json(
         f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/{encoded}",
         headers={"Authorization": "Bearer " + google_token()})
@@ -544,6 +544,7 @@ def main():
     # Completed evaluations always win over the provisional error fallback.
     # Missing optional facts are reported explicitly, never silently discarded.
     pending = [r for r in listings if (eligible(r) or reviewable_completed(r)) and
+               not text(r, "Telegram Versand UTC") and
                text(r, "Datensatz-ID") not in seen and
                text(r, "Datensatz-ID").lower() not in forbidden and
                text(r, "Datensatz-ID").lower() not in duplicates and
