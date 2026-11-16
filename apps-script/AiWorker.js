@@ -50,6 +50,14 @@ function drainAiQueue_(ss, queue, options) {
     if (result.status === 'empty' || result.status === 'no_ready_jobs') break;
     steps++;
     waMonitorAi_(imageDiagnosticRun && imageDiagnosticRun.mailId, result);
+    // The persisted AI result is the trigger for low-latency delivery.
+    // No Telegram credentials: GitHub's existing sender remains active.
+    if (result.status === 'completed' && result.listingId &&
+        typeof notifyCompletedListingDirect_ === 'function') {
+      const delivery = notifyCompletedListingDirect_(ss, result.listingId);
+      if (delivery.status === 'failed')
+        waMonitorIssue_('Telegram Direktversand: ' + delivery.error);
+    }
     logImageDiagnostic('ai_worker_step', {
       status: result.status, listing_id: result.listingId || '',
       duration_ms: Date.now() - stepStarted, count: steps,
