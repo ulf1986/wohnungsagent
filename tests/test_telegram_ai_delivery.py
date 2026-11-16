@@ -9,7 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import telegram_listings as mod
 
-NOW = dt.datetime(2026, 11, 9, 19, 0, tzinfo=dt.timezone.utc)
+NOW = dt.datetime.now(dt.timezone.utc)
 REC = (NOW - dt.timedelta(minutes=30)).isoformat()
 URL1 = "https://www.yaencontre.com/alquiler/piso/inmueble-500-12345678"
 URL2 = "https://www.fotocasa.es/es/alquiler/vivienda/malaga/191349647/d"
