@@ -6,7 +6,7 @@ on:
     paths:
       - 'apps-script/**'
       - 'scripts/telegram_listings.py'
-      - 'tests/direct-telegram.test.cjs'
+      - 'tests/**'
       - '.github/workflows/deploy-apps-script.yml'
   workflow_dispatch:
     inputs:
@@ -37,8 +37,8 @@ jobs:
 
       - name: Regressionstests ausführen
         run: |
-          node --test tests/direct-telegram.test.cjs tests/ai-worker.test.cjs
-          python3 -m unittest discover -s tests -p 'test_telegram_ai_delivery.py' -v
+          node --test tests/*.test.cjs
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: clasp installieren
         run: npm install -g @google/clasp@3.4.1
