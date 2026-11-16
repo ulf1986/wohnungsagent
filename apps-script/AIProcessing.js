@@ -45,6 +45,42 @@ const AI_PIPELINE = {
   imageCriteria: ['brightness', 'space', 'furniture_condition', 'care_renovation']
 };
 
+
+/** Choose a runnable queue row without letting older retries block fresh mail. */
+function chooseAiQueueTarget_(rows, qi, index, now, advanceFairness) {
+  const fresh = [], retries = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const received = row[qi['Queue Eingang UTC']];
+    const receivedAt = received instanceof Date ? received.getTime() :
+      Date.parse(String(received || ''));
+    if (!Number.isFinite(receivedAt) || receivedAt > now ||
+        now - receivedAt >= AI_PIPELINE.maxMailAgeHours * 3600000) continue;
+    if (String(row[qi['Queue Bildstatus']] || '') !== AI_PIPELINE.statusReady) continue;
+    const state = String(row[index.status] || 'pending').toLowerCase();
+    if (['completed','duplicate','blocked','needs_review','failed_final','expired']
+        .includes(state)) continue;
+    const retryAt = Date.parse(String(row[index.retryAt] || ''));
+    if (Number.isFinite(retryAt) && retryAt > now) continue;
+    // An unfinished checkpoint is resumed as a first attempt; retry status
+    // is the only explicit lower-priority queue.
+    const entry = {rowNumber:i+2, values:row, receivedAt};
+    (state === 'retry' ? retries : fresh).push(entry);
+  }
+  const byAge = (a,b) => a.receivedAt-b.receivedAt || a.rowNumber-b.rowNumber;
+  fresh.sort(byAge);
+  retries.sort(byAge);
+  const props = PropertiesService.getScriptProperties();
+  const key = 'WOHNUNGSAGENT_AI_FRESH_STREAK';
+  const streak = Math.max(0, Number(props.getProperty(key)) || 0);
+  const useRetry = retries.length && (!fresh.length || streak >= 4);
+  const selected = useRetry ? retries[0] : fresh[0];
+  if (advanceFairness && selected) {
+    props.setProperty(key, String(useRetry || !retries.length ? 0 : streak+1));
+  }
+  return selected || null;
+}
+
 /** Aufruf am Ende des bestehenden, gelockten 5-Minuten-Laufs. */
 function processNextAiListing(ss, queue, options) {
   getWohnungsagentSpreadsheetId_(); // Kein abweichendes Ziel für die KI zulassen.
@@ -70,25 +106,11 @@ function processNextAiListing(ss, queue, options) {
   // A digest may have been marked completed before later photos were recovered.
   // Reopen only its unfinished image step, never the already stored text API call.
   // Text-only mode: never reopen completed listings for image reviews.
-  let target = null;
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    // Old mail jobs are not retried: listings typically expire quickly.
-    const received = row[qi['Queue Eingang UTC']];
-    const receivedAt = received instanceof Date ? received.getTime() : Date.parse(String(received || ''));
-    if (!Number.isFinite(receivedAt) || receivedAt > now || now - receivedAt >= AI_PIPELINE.maxMailAgeHours * 3600000) continue;
-    if (String(row[qi['Queue Bildstatus']] || '') !== AI_PIPELINE.statusReady) continue;
-    const state = String(row[index.status] || 'pending');
-    if (['completed', 'duplicate', 'blocked', 'needs_review', 'failed_final', 'expired'].includes(state)) continue;
-    const retryAt = Date.parse(String(row[index.retryAt] || ''));
-    if (Number.isFinite(retryAt) && retryAt > now) continue;
-    // Called only while the shared ScriptLock is held. A previous 'processing'
-    // value therefore belongs to an execution that is no longer holding it.
-    // Reopen its persisted per-listing stage; an uncertain API call is stopped
-    // by beginAiApiOperation_ rather than blindly repeated.
-    target = { rowNumber: i + 2, values: row };
-    break;
-  }
+  // First attempts have priority; reserve every fifth selection for a
+  // due retry so a continuous stream of new mail cannot starve old work.
+  // No retries are attempted before KI Wiederholung ab UTC.
+  const target = chooseAiQueueTarget_(rows, qi, index, now,
+    !(options && options.peek));
   if (!target) return { status: 'no_ready_jobs' };
   if (options && options.peek) return { status: 'ready' };
 
