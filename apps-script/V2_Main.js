@@ -138,7 +138,7 @@ function wa2Run() {
     return summary;
   }catch(e){
     console.error('WA2 Pipeline: '+String(e.message||e).slice(0,180));
-    return {status:'error',error:String(e.message||e).slice(0,180)};
+    throw e; // Visible execution failure; the watchdog can detect a stale pipeline.
   }finally{lock.releaseLock();}
 }
 function wa2DeliverDue(registry,state,credentials,max) {
