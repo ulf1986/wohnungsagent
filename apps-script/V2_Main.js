@@ -43,6 +43,13 @@ function wa2Run() {
       try{
         const mail=wa2ReadMail(entry.id);
         const listings=wa2ExtractListings(mail.html,mail.plain);
+        if(!listings.length){
+          if(!state.data.unparsedMails)state.data.unparsedMails=[];
+          if(!state.data.unparsedMails.some(x=>x.id===entry.id))
+            state.data.unparsedMails.push({id:entry.id,receivedAt:entry.receivedAt});
+          state.data.unparsedMails=state.data.unparsedMails.slice(-25);
+          summary.errors.push('Keine Portal-ID aus Suchmail '+entry.id);
+        }
         const newRows=[];
         for(const listing of listings) {
           if(wa2AddPending(registry.data,listing,entry.id,mail.receivedAt))newRows.push(listing);
@@ -63,6 +70,31 @@ function wa2Run() {
           }
           const facts=wa2AnalyzeListings(newRows,credentials,pageResults);
           summary.aiCalls++;state.data.totals.aiCalls++;
+          // Some mails appear complete by regex but the model cannot prove
+          // a value. Fetch only those pages, then merge missing facts.
+          if(WA2_CONFIG.allowPageFetch&&Date.now()-start<WA2_CONFIG.maxRunMilliseconds-55000){
+            const missing=newRows.filter(x=>
+              (facts[x.id].rent===null||facts[x.id].area===null)&&!pageResults[x.id]);
+            const recovered=[];
+            for(const item of missing.slice(0,8)){
+              if(Date.now()-start>WA2_CONFIG.maxRunMilliseconds-40000)break;
+              const page=wa2FetchPage(item);
+              if(page.status==='ok'){
+                pageResults[item.id]=page;
+                recovered.push(item);
+              }
+            }
+            if(recovered.length)try{
+              const extra=wa2AnalyzeListings(recovered,credentials,pageResults);
+              summary.aiCalls++;state.data.totals.aiCalls++;
+              for(const item of recovered)
+                for(const key of ['rent','area'])
+                  if(facts[item.id][key]===null&&extra[item.id][key]!==null)
+                    facts[item.id][key]=extra[item.id][key];
+            }catch(e){
+              console.warn('WA2 Seiten-Fallback: '+String(e.message||e).slice(0,100));
+            }
+          }
           for(const listing of newRows) {
             const row=registry.data.records[listing.id],result=facts[listing.id];
             row.rent=result.rent;row.area=result.area;row.attempts=0;row.nextAt='';
