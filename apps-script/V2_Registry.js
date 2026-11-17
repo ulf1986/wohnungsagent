@@ -14,7 +14,8 @@ function wa2StoreFile(key,name,initial) {
   const p=wa2Properties(),folder=wa2StoreFolder();
   let id=p.getProperty(key),file=null;
   if(id) {
-    try{file=DriveApp.getFileById(id);}catch(e){file=null;}
+    try{file=DriveApp.getFileById(id);}
+    catch(e){throw new Error('WA2: Vorhandene Speicherdatei nicht erreichbar: '+name);}
   }
   if(!file){
     const found=folder.getFilesByName(name);
