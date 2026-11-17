@@ -18,9 +18,12 @@ function wa2HealthStatus(state,registry,now) {
 function wa2MaybeReportHealth(stateHolder,registryHolder,credentials,now) {
   const state=stateHolder.data,errors=wa2HealthStatus(state,registryHolder.data,now);
   const code=errors.join(',')||'OK';
-  if(code===state.lastAlertCode)return errors;
   const last=Date.parse(state.lastAlertUtc||'');
-  if(code!=='OK'&&Number.isFinite(last)&&now-last<4*3600000)return errors;
+  const recent=Number.isFinite(last)&&now-last<4*3600000;
+  // A healthy first run is not a recovery event.
+  if(code==='OK'&&!state.lastAlertCode)return errors;
+  // Repeat only continuing problems after four hours. New failures alert now.
+  if(code===state.lastAlertCode&&(code==='OK'||recent))return errors;
   const message=code==='OK'?'Wohnungsagent 2.0: Störung behoben.':
     'Wohnungsagent 2.0: '+errors.join(', ')+' (Details im Apps-Script-Log).';
   try{wa2SendTelegram(credentials,message);}
