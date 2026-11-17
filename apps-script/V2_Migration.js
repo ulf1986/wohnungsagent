@@ -46,8 +46,10 @@ function wa2MigrateHistory() {
     state.data.lastScanUtc='';
     wa2SaveJson(state,'state');
     wa2Properties().setProperty('WA2_MIGRATION_COMPLETE','true');
-    return {legacySentImported:Object.keys(registry.data.records).length-original,
+    const result={legacySentImported:Object.keys(registry.data.records).length-original,
       totalStored:Object.keys(registry.data.records).length,
       historyCount:history.sent.length};
+    console.log('WA2_MIGRATION '+JSON.stringify(result));
+    return result;
   }finally{lock.releaseLock();}
 }
