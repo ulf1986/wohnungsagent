@@ -42,7 +42,8 @@ function wa2Run() {
       if(entry.nextAt&&Date.parse(entry.nextAt)>Date.now())continue;
       try{
         const mail=wa2ReadMail(entry.id);
-        const listings=wa2ExtractListings(mail.html,mail.plain);
+        const html=wa2ResolveMilanunciosTrackedLinks(mail.html);
+        const listings=wa2ExtractListings(html,mail.plain);
         if(!listings.length){
           if(!state.data.unparsedMails)state.data.unparsedMails=[];
           if(!state.data.unparsedMails.some(x=>x.id===entry.id))
