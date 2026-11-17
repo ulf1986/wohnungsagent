@@ -66,8 +66,8 @@ test('Milanuncios tracking card resolves directly without fetching its photo',()
     '<img src="https://images-re.milanuncios.com/images/ads/sample"></a>';
   c.html=html;
   const resolved=vm.runInContext('wa2ResolveMilanunciosTrackedLinks(html)',c);
-  const listings=vm.runInContext('wa2ExtractListings(html,"")',vm.createContext(
-    Object.assign({},c,{html:resolved})));
+  c.resolved=resolved;
+  const listings=vm.runInContext('wa2ExtractListings(resolved,"")',c);
   assert.equal(calls,1);
   assert.equal(listings.length,1);
   assert.equal(listings[0].id,'milanuncios:625396547');
