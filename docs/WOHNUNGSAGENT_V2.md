@@ -115,3 +115,16 @@ enthält bewusst keine schedule- oder Deploy-Schritte.
 - GitHub Actions und Gmail-Zeittrigger sind nicht sekundenexakt.
 - Eine dauerhafte JSON-Datei ist einfacher als Sheets, bei sehr großer
   Datenmenge später gegebenenfalls auf einen geeigneteren Store migrieren.
+
+## Erststart und Backlog-Monitoring
+
+Die erste Gmail-Erfassung berücksichtigt bis zu 48 Stunden rückwirkend. Weil
+pro Lauf höchstens acht Mails verarbeitet werden, kann der Erststart mehrere
+Zeittrigger benötigen. Alte Suchmails allein sind deshalb kein Störungsnachweis.
+
+Der Watchdog beobachtet die Fortschrittszeit der Warteschlange. Sobald eine
+wartende Mail erfolgreich verarbeitet wurde, beginnt eine neue Beobachtungsfrist.
+Nur wenn ältere Nachrichten weiterhin warten und für **über 60 Minuten**
+keine solche Verarbeitung stattgefunden hat, wird `MAIL_BACKLOG` gemeldet.
+Andere Fehler (`GMAIL_STALE`, `PROCESSING_FAILED` usw.) werden unabhängig
+davon gemeldet. Die Statusdaten liegen in der privaten `state.json`.
