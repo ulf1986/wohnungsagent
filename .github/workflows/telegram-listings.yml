@@ -1,9 +1,7 @@
 name: Wohnungsagent – Telegram Wohnungsangebote
 
 on:
-  schedule:
-    # GitHub-Zeitplan kann verzoegert starten.
-    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
+  # V1 schedule removed at cutover; workflow_dispatch remains for rollback diagnostics.
   workflow_dispatch:
 
 permissions:
