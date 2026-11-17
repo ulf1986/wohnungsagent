@@ -51,5 +51,10 @@ test('one-time migration seeds only actually delivered legacy IDs and is idempot
   assert.equal(registry.records['yaencontre:112586738'].status,'sent');
   assert.equal(registry.records['fotocasa:191299321'].status,'sent');
   assert.equal(registry.records['idealista:87654321'],undefined);
-  assert.equal(vm.runInContext('wa2MigrateHistory().status',c),'already_migrated');
+  const stateBefore=JSON.parse([...files.values()].find(x=>x.name==='state.json').data);
+  const second=vm.runInContext('wa2MigrateHistory()',c);
+  assert.equal(second.status,'resynced');
+  assert.equal(second.legacySentImported,0);
+  const stateAfter=JSON.parse([...files.values()].find(x=>x.name==='state.json').data);
+  assert.equal(stateBefore.checkpointUtc,stateAfter.checkpointUtc);
 });
