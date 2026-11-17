@@ -13,7 +13,7 @@ function ctxForGmail(messages){
     }},
     console
   });
-  for(const name of ['Config','Gmail']){
+  for(const name of ['Config','Registry','Gmail']){
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../../apps-script/V2_'+name+'.js'),'utf8'),ctx);
   }
   return {ctx,get calls(){return calls}};
