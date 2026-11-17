@@ -6,12 +6,15 @@
 function wa2MigrateHistory() {
   if(wa2IsEnabled())throw new Error('WA2: Migration nur im deaktivierten Zustand');
   const alreadyMigrated=wa2Properties().getProperty('WA2_MIGRATION_COMPLETE')==='true';
-  const lock=LockService.getScriptLock();
-  // The legacy AI worker and Gmail pipeline share this ScriptLock. Give them
-  // time to finish rather than failing a manual migration after one second.
-  if(!lock.tryLock(30000))
-    throw new Error('WA2: Lock auch nach 30 Sekunden besetzt. Bitte laufende V1-Ausführungen prüfen und Migration erneut ausführen.');
+  // V1 uses ScriptLock for its ongoing Gmail and AI pipeline. During cutover,
+  // V2 is disabled, so this manual migration can use a separate UserLock.
+  // This serializes repeated manual migration attempts by the same operator
+  // without competing with V1's long-running ScriptLock.
+  const lock=LockService.getUserLock();
+  if(!lock.tryLock(10000))
+    throw new Error('WA2: Migrations-Lock auch nach 10 Sekunden besetzt. Bitte parallele Migrationsausführungen prüfen.');
   try {
+    if(wa2IsEnabled())throw new Error('WA2: V2 wurde während des Migrationsstarts aktiviert');
     const registry=wa2LoadRegistry(),state=wa2LoadState();
     const original=Object.keys(registry.data.records).length;
     const add=id=>{
