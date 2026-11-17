@@ -52,3 +52,23 @@ test('price is displayed even above historic 1200 Euro ceiling',()=>{
   assert.match(msg,/85 m²/);
   assert.doesNotMatch(msg,/Bewertung|Bild/i);
 });
+
+test('Milanuncios tracking card resolves directly without fetching its photo',()=>{
+  const c=load();
+  let calls=0;
+  c.UrlFetchApp={fetch:()=>{
+    calls++;
+    return {getResponseCode:()=>302,getAllHeaders:()=>({
+      Location:'https://www.milanuncios.com/alquiler-de-pisos/malaga-centro-625396547.htm'
+    })};
+  }};
+  const html='<a href="https://sgt.milanuncios.com/ls/click?t=abc">'+
+    '<img src="https://images-re.milanuncios.com/images/ads/sample"></a>';
+  c.html=html;
+  const resolved=vm.runInContext('wa2ResolveMilanunciosTrackedLinks(html)',c);
+  const listings=vm.runInContext('wa2ExtractListings(html,"")',vm.createContext(
+    Object.assign({},c,{html:resolved})));
+  assert.equal(calls,1);
+  assert.equal(listings.length,1);
+  assert.equal(listings[0].id,'milanuncios:625396547');
+});
