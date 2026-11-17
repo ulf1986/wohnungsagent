@@ -15,14 +15,30 @@ function wa2InstallTriggers() {
     throw new Error('WA2: Alte GitHub-Telegram-Workflows zuerst deaktivieren');
   if(wa2CheckConfiguration().missing.length)
     throw new Error('WA2: API-Zugangsdaten unvollständig');
-  const old=['runImageImport','runGmailImagePipeline','runAiQueueWorker',
-    'wa2Run','wa2Watchdog'];
-  for(const trigger of ScriptApp.getProjectTriggers())
-    if(old.includes(trigger.getHandlerFunction()))ScriptApp.deleteTrigger(trigger);
-  // Old Apps-Script pipeline is stopped before WA2 is enabled.
+  // New triggers are installed while V2 remains OFF. The V1 triggers are
+  // removed only after both have been created without error.
+  p.setProperty('WA2_ENABLED','false');
+  const existing=ScriptApp.getProjectTriggers();
+  for(const trigger of existing)
+    if(['wa2Run','wa2Watchdog'].includes(trigger.getHandlerFunction()))
+      ScriptApp.deleteTrigger(trigger);
+  const created=[];
+  try {
+    created.push(ScriptApp.newTrigger('wa2Run').timeBased().everyMinutes(10).create());
+    created.push(ScriptApp.newTrigger('wa2Watchdog').timeBased().everyMinutes(15).create());
+  }catch(e) {
+    for(const trigger of created)try{ScriptApp.deleteTrigger(trigger);}catch(ignored){}
+    throw new Error('WA2: Neue Trigger konnten nicht eingerichtet werden: '+e.message);
+  }
+  try {
+    for(const trigger of existing)
+      if(['runImageImport','runGmailImagePipeline','runAiQueueWorker'].includes(
+        trigger.getHandlerFunction()))ScriptApp.deleteTrigger(trigger);
+  }catch(e) {
+    for(const trigger of created)try{ScriptApp.deleteTrigger(trigger);}catch(ignored){}
+    throw new Error('WA2: Alte Trigger konnten nicht vollständig entfernt werden: '+e.message);
+  }
   p.setProperty('WA2_ENABLED','true');
-  ScriptApp.newTrigger('wa2Run').timeBased().everyMinutes(10).create();
-  ScriptApp.newTrigger('wa2Watchdog').timeBased().everyMinutes(15).create();
   return wa2ListTriggers();
 }
 function wa2Disable() {
