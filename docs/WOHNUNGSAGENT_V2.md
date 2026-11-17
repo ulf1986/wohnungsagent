@@ -15,8 +15,10 @@ Google-Sheets-Abhängigkeit zur Laufzeit.
 - V2_Config.js: Konfiguration und Script Properties.
 - V2_Main.js: orchestriert den vollständigen Ablauf und die Wiederaufnahme.
 - V2_Gmail.js: sparsame Gmail-Suche alle zehn Minuten, 30-Minuten-Overlap;
-  zwei begrenzte Queries je Suchlauf, einmalige Volltextladung pro Kandidat.
-- V2_Portals.js: Portal-IDs, URL-Kanonisierung, Extrakte aus Sammelmails.
+  zwei begrenzte Queries je Suchlauf mit sicherer Pagination,
+  einmalige Volltextladung pro Kandidat.
+- V2_Portals.js: Portal-IDs, URL-Kanonisierung, Extrakte aus Sammelmails,
+  Milanuncios-Redirects ohne Bilddownloads.
 - V2_Page.js: begrenzter Webseiten-Fallback mit Domain- und Identitätsprüfung.
 - V2_AI.js: OpenAI Responses API, strukturiertes Textschema, Belegprüfung.
 - V2_Registry.js: private Drive-JSON-Dateien, Locks, Status und tägliche Backups.
@@ -36,6 +38,10 @@ automatisch wiederholt, um doppelte Telegram-Meldungen zu vermeiden.
 
 Die Portal-ID ist immer qualifiziert, z. B. idealista:12345678. Eine identische
 Ziffernfolge verschiedener Portale führt nicht zu einer Dublette.
+
+Nicht zuordenbare Suchmails werden in state.json als unparsedMails gemerkt.
+Mit wa2RetryUnparsedMail(gmailId) können sie nach einer Parserkorrektur erneut
+angestoßen oder mit wa2AcknowledgeUnparsedMail(gmailId) manuell quittiert werden.
 
 ## Quotas
 
@@ -71,6 +77,9 @@ erzeugen keine kostenpflichtigen OpenAI-Aufrufe und ändern keinen Google Drive.
 Pflichtfälle: Einzelmail, Sammelmail, alle fünf Anbieter-IDs, Quellennachweise,
 59/60 m², Mietpreis ohne Obergrenze, bereits versendete IDs, OpenAI-Fehler,
 Telegram-Fehler, fehlerhaftes Speicher-JSON und Wiederaufnahme.
+
+Die Laufzeitmetrik state.metrics enthält Anzahl, Summe und Maximum der
+Gmail-Eingang-bis-Telegram-Minuten; Mittelwert = totalLatencyMinutes/sampleCount.
 
 ## Noch ausstehende produktive Abnahme
 
