@@ -8,6 +8,7 @@ function wa2HealthStatus(state,registry,now) {
   if(!Number.isFinite(scan)||now-scan>35*60000)errors.push('GMAIL_STALE');
   if(state.mailQueue.some(x=>now-Date.parse(x.receivedAt)>30*60000))
     errors.push('MAIL_BACKLOG');
+  if((state.unparsedMails||[]).length)errors.push('MAIL_UNPARSED');
   const records=Object.values(registry.records);
   if(records.some(x=>x.status==='failed_final'))errors.push('PROCESSING_FAILED');
   if(records.some(x=>x.status==='unknown_delivery'||x.status==='sending'))
