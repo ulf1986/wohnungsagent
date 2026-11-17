@@ -84,3 +84,43 @@ function wa2LooksComplete(excerpt) {
   return /(?:\d[\d., ]*\s*€|\b(?:precio|alquiler|renta)\s*:?\s*€?\s*\d)/i.test(s)
     && /\b\d[\d., ]*\s*m(?:²|2|\b)|\b(?:superficie|metros)\s*:?\s*\d/i.test(s);
 }
+
+/**
+ * Legacy Milanuncios redirect recovery. Look at the linked card's IMG tag
+ * as an anchor discriminator only; NO image URLs are fetched or analyzed.
+ * Never follow generic unsubscribe/tracking links.
+ */
+function wa2ResolveMilanunciosTrackedLinks(html) {
+  const source=String(html||'');
+  if(!/sgt\.milanuncios\.com\/ls\/click/i.test(source))return source;
+  const cache=new Map();
+  return source.replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi,(whole,attrs,body)=>{
+    const match=attrs.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const href=wa2CleanUrl(match&&(match[1]||match[2]||match[3]));
+    if(!/^https:\/\/sgt\.milanuncios\.com\/ls\/click\?/i.test(href))return whole;
+    if(!/<img\b/i.test(body)||!/images-re\.milanuncios\.com\/images\/ads\//i.test(body))
+      return whole;
+    if(!cache.has(href)){
+      if(cache.size>=8)return whole;
+      let target='',current=href;
+      for(let hop=0;hop<3;hop++){
+        let response;
+        try{response=UrlFetchApp.fetch(current,{
+          followRedirects:false,muteHttpExceptions:true,validateHttpsCertificates:true
+        });}catch(e){break;}
+        if(![301,302,303,307,308].includes(response.getResponseCode()))break;
+        const headers=response.getAllHeaders();
+        let next=headers.Location||headers.location||'';
+        if(Array.isArray(next))next=next[0];
+        next=wa2CleanUrl(next);
+        const direct=wa2GetPortalListing(next);
+        if(direct&&direct.provider==='milanuncios'){target=direct.url;break;}
+        if(!/^https:\/\/sgt\.milanuncios\.com\/ls\/click\?/i.test(next))break;
+        current=next;
+      }
+      cache.set(href,target);
+    }
+    const resolved=cache.get(href);
+    return resolved?'<a href="'+resolved+'">'+body+'</a>':whole;
+  });
+}
