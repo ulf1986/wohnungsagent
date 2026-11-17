@@ -1,0 +1,28 @@
+name: Wohnungsagent V2 Tests (ohne Deployment)
+
+on:
+  pull_request:
+    paths:
+      - 'apps-script/V2_*.js'
+      - 'tests/v2/**'
+      - '.github/workflows/v2-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax prüfen
+        run: |
+          for file in apps-script/V2_*.js; do node --check "$file"; done
+          for file in tests/v2/*.cjs; do node --check "$file"; done
+      - name: Unit- und Integrationstests
+        run: node --test tests/v2/*.test.cjs
