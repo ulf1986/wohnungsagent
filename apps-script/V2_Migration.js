@@ -5,6 +5,8 @@
  */
 function wa2MigrateHistory() {
   if(wa2IsEnabled())throw new Error('WA2: Migration nur im deaktivierten Zustand');
+  if(wa2Properties().getProperty('WA2_MIGRATION_COMPLETE')==='true')
+    return {status:'already_migrated'};
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(1000))throw new Error('WA2: Lock besetzt');
   try {
@@ -26,7 +28,8 @@ function wa2MigrateHistory() {
     const match=String(issue.body||'').match(new RegExp('```json\\s*([\\s\\S]*?)```','i'));
     if(!match)throw new Error('WA2: GitHub-Historie enthält kein JSON');
     const history=JSON.parse(match[1]);
-    if(!Array.isArray(history.sent))throw new Error('WA2: GitHub-Historie ohne sent-IDs');
+    if(!Array.isArray(history.sent)||!history.sent.length)
+      throw new Error('WA2: GitHub-Historie ohne sent-IDs');
     history.sent.forEach(add);
     // Additionally include IDs sent directly by Apps Script (if any).
     const sheet=SpreadsheetApp.openById(CONFIG.spreadsheetId).getSheetByName('Anzeigen');
