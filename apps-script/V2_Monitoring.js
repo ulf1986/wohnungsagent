@@ -2,11 +2,41 @@
  * Small watchdog, no Gmail searches, no Sheets or GitHub issues.
  * Alerts are rate-limited to avoid the historical notification storm.
  */
+
+/**
+ * Mail age alone does not mean the pipeline is stuck: the initial 48h lookback
+ * naturally starts with older messages. Start a fresh observation period
+ * whenever a waiting mail is processed successfully.
+ * Returns true only when state needs to be saved.
+ */
+function wa2TrackBacklog(state,now) {
+  const oldMail=(state.mailQueue||[]).some(x=>
+    Number.isFinite(Date.parse(x.receivedAt||''))&&
+    now-Date.parse(x.receivedAt)>30*60000);
+  if(!oldMail){
+    if(!state.backlogObservationUtc)return false;
+    state.backlogObservationUtc='';
+    return true;
+  }
+  const observed=Date.parse(state.backlogObservationUtc||'');
+  const processed=Date.parse(state.lastMailProcessedAtUtc||'');
+  if(!Number.isFinite(observed)||
+      (Number.isFinite(processed)&&processed>=observed)){
+    state.backlogObservationUtc=new Date(now).toISOString();
+    return true;
+  }
+  return false;
+}
+
 function wa2HealthStatus(state,registry,now) {
   const errors=[];
   const scan=Date.parse(state.lastScanUtc||'');
   if(!Number.isFinite(scan)||now-scan>35*60000)errors.push('GMAIL_STALE');
-  if(state.mailQueue.some(x=>now-Date.parse(x.receivedAt)>30*60000))
+  const staleQueued=(state.mailQueue||[]).some(x=>
+    Number.isFinite(Date.parse(x.receivedAt||''))&&
+    now-Date.parse(x.receivedAt)>30*60000);
+  const observed=Date.parse(state.backlogObservationUtc||'');
+  if(staleQueued&&Number.isFinite(observed)&&now-observed>60*60000)
     errors.push('MAIL_BACKLOG');
   if((state.unparsedMails||[]).length)errors.push('MAIL_UNPARSED');
   const records=Object.values(registry.records);
@@ -16,7 +46,9 @@ function wa2HealthStatus(state,registry,now) {
   return errors;
 }
 function wa2MaybeReportHealth(stateHolder,registryHolder,credentials,now) {
-  const state=stateHolder.data,errors=wa2HealthStatus(state,registryHolder.data,now);
+  const state=stateHolder.data;
+  if(wa2TrackBacklog(state,now))wa2SaveJson(stateHolder,'state');
+  const errors=wa2HealthStatus(state,registryHolder.data,now);
   const code=errors.join(',')||'OK';
   const last=Date.parse(state.lastAlertUtc||'');
   const recent=Number.isFinite(last)&&now-last<4*3600000;
