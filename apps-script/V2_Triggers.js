@@ -24,7 +24,7 @@ function wa2InstallTriggers() {
       ScriptApp.deleteTrigger(trigger);
   const created=[];
   try {
-    created.push(ScriptApp.newTrigger('wa2Run').timeBased().everyMinutes(10).create());
+    created.push(ScriptApp.newTrigger('wa2Run').timeBased().everyMinutes(WA2_CONFIG.searchIntervalMinutes).create());
     created.push(ScriptApp.newTrigger('wa2Watchdog').timeBased().everyMinutes(15).create());
   }catch(e) {
     for(const trigger of created)try{ScriptApp.deleteTrigger(trigger);}catch(ignored){}
@@ -52,4 +52,18 @@ function wa2Disable() {
 function wa2Preflight() {
   return {config:wa2CheckConfiguration(),triggers:wa2ListTriggers(),
     migrationComplete:wa2Properties().getProperty('WA2_MIGRATION_COMPLETE')==='true'};
+}
+
+/**
+ * Manual rollback: stop V2, then restore the existing V1 importer and AI worker
+ * from their preserved functions. Re-enable legacy GitHub Telegram workflows
+ * separately to restore the original delivery path.
+ */
+function wa2RollbackToV1() {
+  wa2Disable();
+  if (typeof setupGmailImageTrigger !== 'function')
+    throw new Error('WA2: Alte Trigger-Funktion fehlt. V1-Code erneut deployen.');
+  setupGmailImageTrigger();
+  return {v2Enabled:wa2IsEnabled(),triggers:wa2ListTriggers(),
+    note:'GitHub Telegram-Workflows müssen separat wieder aktiviert werden.'};
 }
