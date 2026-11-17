@@ -29,6 +29,7 @@ test('saturated Gmail searches are paginated without dropping mail IDs',()=>{
   let scans=0;
   while(scans<12){
     const now=base+scans*11*60000;
+    env.ctx.state=state;env.ctx.now=now;
     const result=vm.runInContext('wa2Discover(state,now)',env.ctx);
     // External value injection, not a global declaration in the app.
     scans++;
