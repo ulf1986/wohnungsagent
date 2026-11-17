@@ -6,6 +6,7 @@ const path=require('node:path');
 test('one-time migration seeds only actually delivered legacy IDs and is idempotent',()=>{
   const props=new Map([['WA2_ENABLED','false']]),files=new Map();
   let number=0;
+  const lockWaits=[];
   const folder={
     getId:()=>'privateFolder',
     getFilesByName:name=>{const found=[...files.values()].filter(x=>x.name===name);let i=0;
@@ -26,7 +27,7 @@ test('one-time migration seeds only actually delivered legacy IDs and is idempot
       getProperty:getProp,setProperty:(k,v)=>props.set(k,String(v))})},
     DriveApp:{createFolder:()=>folder,getFolderById:()=>folder,
       getFileById:id=>files.get(id)},
-    LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock(){}})},
+    LockService:{getScriptLock:()=>({tryLock:ms=>{lockWaits.push(ms);return true;},releaseLock(){}})},
     SpreadsheetApp:{openById:()=>({getSheetByName:()=>({getDataRange:()=>({
       getValues:()=>[
         ['Datensatz-ID','Telegram Versand UTC'],
@@ -57,4 +58,5 @@ test('one-time migration seeds only actually delivered legacy IDs and is idempot
   assert.equal(second.legacySentImported,0);
   const stateAfter=JSON.parse([...files.values()].find(x=>x.name==='state.json').data);
   assert.equal(stateBefore.checkpointUtc,stateAfter.checkpointUtc);
+  assert.deepEqual(lockWaits,[30000,30000]);
 });
