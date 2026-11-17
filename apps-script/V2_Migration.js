@@ -23,7 +23,7 @@ function wa2MigrateHistory() {
     if(response.getResponseCode()!==200)
       throw new Error('WA2: GitHub-Versandhistorie nicht lesbar: HTTP '+response.getResponseCode());
     const issue=JSON.parse(response.getContentText());
-    const match=String(issue.body||'').match(/`function raw() { [native code] }jsons*([sS]*?)`function raw() { [native code] }/i);
+    const match=String(issue.body||'').match(new RegExp('```json\\s*([\\s\\S]*?)```','i'));
     if(!match)throw new Error('WA2: GitHub-Historie enthält kein JSON');
     const history=JSON.parse(match[1]);
     if(!Array.isArray(history.sent))throw new Error('WA2: GitHub-Historie ohne sent-IDs');
