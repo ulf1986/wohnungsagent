@@ -5,8 +5,7 @@
  */
 function wa2MigrateHistory() {
   if(wa2IsEnabled())throw new Error('WA2: Migration nur im deaktivierten Zustand');
-  if(wa2Properties().getProperty('WA2_MIGRATION_COMPLETE')==='true')
-    return {status:'already_migrated'};
+  const alreadyMigrated=wa2Properties().getProperty('WA2_MIGRATION_COMPLETE')==='true';
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(1000))throw new Error('WA2: Lock besetzt');
   try {
@@ -41,12 +40,15 @@ function wa2MigrateHistory() {
     if(sentCol>=0)for(const row of values.slice(1))
       if(row[sentCol])add(String(row[idCol]).trim());
     wa2SaveJson(registry,'registry');
-    // On first launch, discover up to 48h of previously excluded current emails.
-    state.data.checkpointUtc=new Date(Date.now()-48*3600000).toISOString();
-    state.data.lastScanUtc='';
-    wa2SaveJson(state,'state');
+    // Only the initial migration seeds the 48-hour lookback. Safe resyncs
+    // preserve the pending-mail queue and Gmail checkpoint without resetting.
+    if(!alreadyMigrated){
+      state.data.checkpointUtc=new Date(Date.now()-48*3600000).toISOString();
+      state.data.lastScanUtc='';
+      wa2SaveJson(state,'state');
+    }
     wa2Properties().setProperty('WA2_MIGRATION_COMPLETE','true');
-    const result={legacySentImported:Object.keys(registry.data.records).length-original,
+    const result={status:alreadyMigrated?'resynced':'migrated',legacySentImported:Object.keys(registry.data.records).length-original,
       totalStored:Object.keys(registry.data.records).length,
       historyCount:history.sent.length};
     console.log('WA2_MIGRATION '+JSON.stringify(result));
