@@ -1,9 +1,7 @@
 name: Wohnungsagent – Telegram Watchdog
 
 on:
-  schedule:
-    # Alle 15 Minuten (UTC). GitHub kann geplante Starts verzoegern.
-    - cron: '3,18,33,48 * * * *'
+  # V1 schedule removed at cutover; workflow_dispatch remains for rollback diagnostics.
   workflow_dispatch:
     inputs:
       mode:
