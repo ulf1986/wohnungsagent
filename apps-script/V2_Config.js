@@ -5,10 +5,11 @@
 const WA2_CONFIG = Object.freeze({
   enabledProperty: 'WA2_ENABLED',
   folderProperty: 'WA2_STATE_FOLDER_ID',
-  searchIntervalMinutes: 10,
+  searchIntervalMinutes: 15,
+  // Conservative initial interval; only shorten after measuring actual usage.
   searchOverlapMinutes: 30,
   reconciliationHours: 12,
-  maxThreadsPerSearch: 80,
+  maxThreadsPerSearch: 50,
   maxNewMailsPerRun: 20,
   maxMailsProcessedPerRun: 8,
   maxListingsPerMail: 40,
