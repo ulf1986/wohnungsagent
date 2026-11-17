@@ -71,3 +71,34 @@ function wa2ReadMail(id) {
     plain:String(mail.getPlainBody()||'')
   };
 }
+
+/**
+ * Operator-initiated recovery of an alert mail without a recognized portal ID.
+ * Does not rescan the mailbox or bypass the dedup registry.
+ */
+function wa2RetryUnparsedMail(mailId) {
+  const lock=LockService.getScriptLock();
+  if(!lock.tryLock(1000))throw new Error('WA2: Lock besetzt');
+  try{
+    const holder=wa2LoadState(),state=holder.data;
+    const candidate=(state.unparsedMails||[]).find(x=>x.id===String(mailId));
+    if(!candidate)throw new Error('WA2: Unbekannte Gmail-ID');
+    if(!state.mailQueue.some(x=>x.id===candidate.id))
+      state.mailQueue.push({id:candidate.id,receivedAt:candidate.receivedAt,attempts:0,nextAt:''});
+    state.unparsedMails=state.unparsedMails.filter(x=>x.id!==candidate.id);
+    wa2SaveJson(holder,'state');
+    return {queued:candidate.id};
+  }finally{lock.releaseLock();}
+}
+/** Dismiss a manually inspected search alert. */
+function wa2AcknowledgeUnparsedMail(mailId) {
+  const lock=LockService.getScriptLock();
+  if(!lock.tryLock(1000))throw new Error('WA2: Lock besetzt');
+  try{
+    const holder=wa2LoadState();
+    const prior=(holder.data.unparsedMails||[]).length;
+    holder.data.unparsedMails=(holder.data.unparsedMails||[]).filter(x=>x.id!==String(mailId));
+    if(holder.data.unparsedMails.length!==prior)wa2SaveJson(holder,'state');
+    return {acknowledged:holder.data.unparsedMails.length!==prior};
+  }finally{lock.releaseLock();}
+}
