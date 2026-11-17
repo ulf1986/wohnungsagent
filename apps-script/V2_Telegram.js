@@ -52,6 +52,15 @@ function wa2DeliverOne(holder,row,credentials,state) {
     row.updatedAt=row.sentAt;
     wa2SaveJson(holder,'registry');
     state.totals.sent=(state.totals.sent||0)+1;
+    const received=Date.parse(row.receivedAt||'');
+    if(Number.isFinite(received)){
+      const minutes=Math.max(0,(Date.now()-received)/60000);
+      if(!state.metrics)state.metrics={sampleCount:0,totalLatencyMinutes:0,maxLatencyMinutes:0};
+      state.metrics.sampleCount++;
+      state.metrics.totalLatencyMinutes+=minutes;
+      state.metrics.maxLatencyMinutes=Math.max(state.metrics.maxLatencyMinutes,minutes);
+      state.metrics.lastLatencyMinutes=Math.round(minutes*10)/10;
+    }
     return true;
   }catch(e){
     if(e.uncertain){
