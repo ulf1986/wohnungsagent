@@ -28,7 +28,7 @@ function environment({area=75,rent=950,telegramFailure=false}={}){
   };
   folders.set('folder1',folder);
   const mail={
-    getDate:()=>new Date(),
+    getDate:()=>new Date(Date.now()-60000),
     getId:()=>'gmail-1',getSubject:()=>'Idealista nuevas viviendas',
     getBody:()=>'<p>Piso en Malaga por '+rent+' € y '+area+' m²</p><a href="https://www.idealista.com/inmueble/12345678/">Ver anuncio</a>',
     getPlainBody:()=>''};
