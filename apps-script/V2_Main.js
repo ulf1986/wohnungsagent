@@ -110,6 +110,7 @@ function wa2Run() {
         }
         state.data.mailQueue=state.data.mailQueue.filter(x=>x.id!==entry.id);
         state.data.totals.mails++;
+        state.data.lastMailProcessedAtUtc=new Date().toISOString();
         summary.mails++;
         wa2SaveJson(state,'state');
         // Deliver newly ready listings without waiting for another scheduler tick.
