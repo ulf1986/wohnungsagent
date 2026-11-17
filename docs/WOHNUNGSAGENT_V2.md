@@ -14,7 +14,7 @@ Google-Sheets-Abhängigkeit zur Laufzeit.
 
 - V2_Config.js: Konfiguration und Script Properties.
 - V2_Main.js: orchestriert den vollständigen Ablauf und die Wiederaufnahme.
-- V2_Gmail.js: sparsame Gmail-Suche alle zehn Minuten, 30-Minuten-Overlap;
+- V2_Gmail.js: sparsame Gmail-Suche alle fünfzehn Minuten, 30-Minuten-Overlap;
   zwei begrenzte Queries je Suchlauf mit sicherer Pagination,
   einmalige Volltextladung pro Kandidat.
 - V2_Portals.js: Portal-IDs, URL-Kanonisierung, Extrakte aus Sammelmails,
@@ -45,13 +45,12 @@ angestoßen oder mit wa2AcknowledgeUnparsedMail(gmailId) manuell quittiert werde
 
 ## Quotas
 
-Zielintervall zehn Minuten; zwei GmailApp.search-Suchmuster je Intervall;
-höchstens 80 Threads pro Query, 20 neue Mail-IDs und acht zu bearbeitende
+Zielintervall fünfzehn Minuten; zwei GmailApp.search-Suchmuster je Intervall;
+höchstens 50 Threads pro Query, 20 neue Mail-IDs und acht zu bearbeitende
 Mails pro Lauf. Es gibt keinen zweiten Gmail-Scan durch Monitoring. Bei einem
 Quota-Fehler pausiert die neue Suche 60 Minuten, ohne den Checkpoint zu
 verlieren. Werte sind Konfigurationsziele und **keine garantierte Quota-Freigabe**.
-Zur Aktivierung zuerst Nutzungszahlen und Triggerverhalten prüfen. Bei erneutem
-Quota-Problem Intervall auf 15 Minuten anheben.
+Zur Aktivierung zuerst Nutzungszahlen und Triggerverhalten prüfen. Ein kürzeres Suchintervall wird erst nach realen Kontingentmessungen aktiviert.
 
 ## Secrets
 
@@ -99,8 +98,8 @@ Gmail-Eingang-bis-Telegram-Minuten; Mittelwert = totalLatencyMinutes/sampleCount
 9. Mit einer konkreten neuen Suchmail die Ende-zu-Ende-Verarbeitung und
    Telegram-Zustellung überprüfen; keine Doppelmeldung, keine Datenverluste.
 10. Nach mehrtägiger Beobachtung Altcode aus dem aktiven Projekt bereinigen.
-    Für Rollback wa2Disable() aufrufen, Legacy-Code/Trigger kontrolliert
-    wiederherstellen und GitHub-Workflows aktivieren.
+    Für Rollback wa2RollbackToV1() ausführen, danach die GitHub-
+    Telegram-Workflows separat wieder aktivieren.
 
 **Wichtig:** Weder ein PR noch dessen Merge führt einen Apps-Script-Deploy aus.
 Die bestehende deploy-apps-script.yml ist manuell. Die V2-Test-Workflow-Datei
