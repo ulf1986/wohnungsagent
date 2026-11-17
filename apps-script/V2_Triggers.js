@@ -50,8 +50,11 @@ function wa2Disable() {
 }
 /** Safe dry-run: no Gmail, AI, Telegram or filesystem mutations. */
 function wa2Preflight() {
-  return {config:wa2CheckConfiguration(),triggers:wa2ListTriggers(),
-    migrationComplete:wa2Properties().getProperty('WA2_MIGRATION_COMPLETE')==='true'};
+  const result={config:wa2CheckConfiguration(),triggers:wa2ListTriggers(),
+    migrationComplete:wa2Properties().getProperty('WA2_MIGRATION_COMPLETE')==='true',
+    legacyGithubMarkedDisabled:wa2Properties().getProperty('WA2_LEGACY_GITHUB_DISABLED')==='true'};
+  console.log('WA2_PREFLIGHT '+JSON.stringify(result));
+  return result;
 }
 
 /**
