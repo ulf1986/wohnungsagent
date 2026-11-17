@@ -21,6 +21,7 @@ test('monitor identifies broken Gmail, ambiguous Telegram and dead jobs',()=>{
   const c=createCtx(),now=Date.now();
   c.now=now;
   c.state={lastScanUtc:new Date(now-3600000).toISOString(),
+    backlogObservationUtc:new Date(now-2*3600000).toISOString(),
     mailQueue:[{receivedAt:new Date(now-3600000).toISOString()}]};
   c.registry={records:{a:{status:'unknown_delivery'},b:{status:'failed_final'}}};
   const errors=vm.runInContext('wa2HealthStatus(state,registry,now)',c);
@@ -37,4 +38,32 @@ test('unknown area Telegram message is explicitly identified as unverified',()=>
   const value=vm.runInContext('wa2FormatMessage(row)',c);
   assert.match(value,/Fläche unbekannt, bitte prüfen/);
   assert.doesNotMatch(value,/0 m²/);
+});
+
+test('initial 48-hour catch-up does not alert without evidence of a stalled queue',()=>{
+  const c=createCtx(),now=Date.now();
+  c.state={lastScanUtc:new Date(now-60000).toISOString(),
+    mailQueue:[{receivedAt:new Date(now-24*3600000).toISOString()}]};
+  c.registry={records:{}};
+  c.now=now;
+  assert.equal(vm.runInContext('wa2TrackBacklog(state,now)',c),true);
+  assert.deepEqual(Array.from(vm.runInContext('wa2HealthStatus(state,registry,now)',c)),[]);
+  c.later=now+59*60000;
+  assert.deepEqual(Array.from(vm.runInContext('wa2HealthStatus(state,registry,later)',c)),['GMAIL_STALE']);
+  c.state.lastMailProcessedAtUtc=new Date(now+30*60000).toISOString();
+  c.later=now+31*60000;
+  assert.equal(vm.runInContext('wa2TrackBacklog(state,later)',c),true);
+  c.state.lastScanUtc=new Date(c.later).toISOString();
+  c.later=now+90*60000;
+  assert.deepEqual(Array.from(vm.runInContext('wa2HealthStatus(state,registry,later)',c)),['GMAIL_STALE']);
+  c.later=now+93*60000;
+  assert.ok(Array.from(vm.runInContext('wa2HealthStatus(state,registry,later)',c)).includes('MAIL_BACKLOG'));
+  c.state.mailQueue=[];
+  assert.equal(vm.runInContext('wa2TrackBacklog(state,later)',c),true);
+  assert.equal(c.state.backlogObservationUtc,'');
+});
+
+test('V2 pipeline records successful mail completion for backlog monitoring',()=>{
+  const source=fs.readFileSync(path.join(__dirname,'../../apps-script/V2_Main.js'),'utf8');
+  assert.match(source,/state\.data\.lastMailProcessedAtUtc=new Date\(\)\.toISOString\(\)/);
 });
