@@ -28,7 +28,7 @@ test('saturated Gmail searches are paginated without dropping mail IDs',()=>{
   const state={version:2,mailQueue:[],indexedMailIds:{},lastScanUtc:'',checkpointUtc:''};
   let scans=0;
   while(scans<12){
-    const now=base+scans*11*60000;
+    const now=base+scans*16*60000;
     env.ctx.state=state;env.ctx.now=now;
     const result=vm.runInContext('wa2Discover(state,now)',env.ctx);
     // External value injection, not a global declaration in the app.
@@ -48,5 +48,5 @@ test('Gmail search is throttled to the selected interval',()=>{
   e.ctx.state=state;e.ctx.now=now;
   vm.runInContext('wa2Discover(state,now)',e.ctx);
   assert.equal(vm.runInContext('wa2SearchDue(state,now+5*60000)',e.ctx),false);
-  assert.equal(vm.runInContext('wa2SearchDue(state,now+11*60000)',e.ctx),true);
+  assert.equal(vm.runInContext('wa2SearchDue(state,now+16*60000)',e.ctx),true);
 });
