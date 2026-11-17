@@ -27,7 +27,12 @@ test('one-time migration seeds only actually delivered legacy IDs and is idempot
       getProperty:getProp,setProperty:(k,v)=>props.set(k,String(v))})},
     DriveApp:{createFolder:()=>folder,getFolderById:()=>folder,
       getFileById:id=>files.get(id)},
-    LockService:{getScriptLock:()=>({tryLock:ms=>{lockWaits.push(ms);return true;},releaseLock(){}})},
+    // V1 can hold ScriptLock indefinitely without preventing a manual history
+    // migration, because V2 is disabled and uses separate state files.
+    LockService:{
+      getScriptLock:()=>{throw new Error('Migration must not use V1 ScriptLock');},
+      getUserLock:()=>({tryLock:ms=>{lockWaits.push(ms);return true;},releaseLock(){}})
+    },
     SpreadsheetApp:{openById:()=>({getSheetByName:()=>({getDataRange:()=>({
       getValues:()=>[
         ['Datensatz-ID','Telegram Versand UTC'],
@@ -58,5 +63,5 @@ test('one-time migration seeds only actually delivered legacy IDs and is idempot
   assert.equal(second.legacySentImported,0);
   const stateAfter=JSON.parse([...files.values()].find(x=>x.name==='state.json').data);
   assert.equal(stateBefore.checkpointUtc,stateAfter.checkpointUtc);
-  assert.deepEqual(lockWaits,[30000,30000]);
+  assert.deepEqual(lockWaits,[10000,10000]);
 });
