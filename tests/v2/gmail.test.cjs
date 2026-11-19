@@ -50,3 +50,28 @@ test('Gmail search is throttled to the selected interval',()=>{
   assert.equal(vm.runInContext('wa2SearchDue(state,now+5*60000)',e.ctx),false);
   assert.equal(vm.runInContext('wa2SearchDue(state,now+16*60000)',e.ctx),true);
 });
+
+test('manual unparsed-mail retry requeues once without sending or Gmail discovery',()=>{
+  const e=ctxForGmail([]);
+  const state={version:2,mailQueue:[],indexedMailIds:{},
+    unparsedMails:[{id:'mail-1',receivedAt:'2026-11-18T23:40:17.000Z'}]};
+  let saves=0,locks=0;
+  e.ctx.LockService={getScriptLock:()=>({
+    tryLock:ms=>{assert.equal(ms,10000);return true;},
+    releaseLock:()=>{locks++;}
+  })};
+  e.ctx.wa2LoadState=()=>({data:state});
+  e.ctx.wa2SaveJson=()=>{saves++;};
+  const first=vm.runInContext('wa2RetryAllUnparsedMails()',e.ctx);
+  assert.equal(first.queued,1);
+  assert.equal(first.remainingUnparsed,0);
+  assert.equal(state.mailQueue.length,1);
+  assert.equal(state.mailQueue[0].id,'mail-1');
+  assert.equal(state.unparsedMails.length,0);
+  const second=vm.runInContext('wa2RetryAllUnparsedMails()',e.ctx);
+  assert.equal(second.queued,0);
+  assert.equal(state.mailQueue.length,1);
+  assert.equal(saves,1);
+  assert.equal(locks,2);
+  assert.equal(e.calls,0);
+});
