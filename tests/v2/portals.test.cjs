@@ -23,6 +23,22 @@ test('stable provider-qualified identity and canonical URLs',()=>{
   for(const [url,id]of urls)assert.equal(vm.runInContext('wa2GetPortalListing('+JSON.stringify(url)+').id',c),id);
   assert.equal(vm.runInContext('wa2GetPortalListing("https://evil.example/inmueble/12345678")',c),null);
 });
+test('Yaencontre individual alert with underscore listing ID is detected',()=>{
+  const c=load();
+  const url='https://www.yaencontre.com/alquiler/piso/inmueble-u15772368_57917264?utm_source=alerta-ye&utm_medium=email';
+  c.url=url;
+  const parsed=vm.runInContext('wa2GetPortalListing(url)',c);
+  assert.equal(parsed.id,'yaencontre:57917264');
+  assert.equal(parsed.url,'https://www.yaencontre.com/alquiler/piso/inmueble-u15772368_57917264');
+  const text='Piso en alquiler en calle Martínez de la Rosa 850 €/mes 40 m² '+url;
+  c.body=text;
+  const listings=vm.runInContext('wa2ExtractListings("",body)',c);
+  assert.equal(listings.length,1);
+  assert.equal(listings[0].id,'yaencontre:57917264');
+  assert.match(listings[0].emailExcerpt,/40 m²/);
+  // A portal search/filter URL is not an individual listing.
+  assert.equal(vm.runInContext('wa2GetPortalListing("https://www.yaencontre.com/alquiler/pisos/custom/e-alquiler-vivienda-habitual/f--1200euros")',c),null);
+});
 test('one email with multiple listings yields separate identities',()=>{
   const c=load();
   const html='<p>Piso 1. 950 € 75 m²</p><a href="https://www.idealista.com/inmueble/12345678/">Ver</a>'+
