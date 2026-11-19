@@ -32,7 +32,8 @@ function wa2GetPortalListing(input) {
     match[1]=match[3];
   } else if (domain('fotocasa.es') && (match=path.match(/\/(\d{6,})(?:\/d)?\/?$/i))) {
     provider='fotocasa'; canonical='https://www.fotocasa.es'+path;
-  } else if (domain('yaencontre.com') && (match=path.match(/-(\d{6,})(?:\/)?$/i))) {
+  } else if (domain('yaencontre.com') && /^\/alquiler\/(?:piso|casa|apartamento|atico|duplex|chalet|estudio)\//i.test(path) &&
+      (match=path.match(/[-_](\d{6,})(?:\/)?$/i))) {
     provider='yaencontre'; canonical='https://www.yaencontre.com'+path;
   } else return null;
   return {id:provider+':'+match[1],provider,url:canonical};
