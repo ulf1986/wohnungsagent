@@ -102,3 +102,31 @@ function wa2AcknowledgeUnparsedMail(mailId) {
     return {acknowledged:holder.data.unparsedMails.length!==prior};
   }finally{lock.releaseLock();}
 }
+
+/**
+ * Zero-argument operator action for the Apps Script function dropdown.
+ * Requeue all still-unparsed search emails after a parser correction.
+ * No Gmail reads or Telegram delivery happen here: wa2Run handles both.
+ */
+function wa2RetryAllUnparsedMails() {
+  const lock=LockService.getScriptLock();
+  if(!lock.tryLock(10000))throw new Error('WA2: Verarbeitung läuft gerade. Erneut versuchen.');
+  try{
+    const holder=wa2LoadState(),state=holder.data;
+    const pending=state.unparsedMails||[];
+    let queued=0,alreadyQueued=0;
+    const queueIds=new Set(state.mailQueue.map(x=>x.id));
+    for(const candidate of pending) {
+      if(queueIds.has(candidate.id)){alreadyQueued++;continue;}
+      state.mailQueue.push({id:candidate.id,receivedAt:candidate.receivedAt,
+        attempts:0,nextAt:''});
+      queueIds.add(candidate.id);
+      queued++;
+    }
+    state.unparsedMails=[];
+    if(pending.length)wa2SaveJson(holder,'state');
+    const result={queued,alreadyQueued,remainingUnparsed:0};
+    console.log('WA2_RETRY_UNPARSED '+JSON.stringify(result));
+    return result;
+  }finally{lock.releaseLock();}
+}
