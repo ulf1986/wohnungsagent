@@ -35,6 +35,12 @@ function wa2GetPortalListing(input) {
   } else if (domain('yaencontre.com') && /^\/alquiler\/(?:piso|casa|apartamento|atico|duplex|chalet|estudio)\//i.test(path) &&
       (match=path.match(/[-_](\d{6,})(?:\/)?$/i))) {
     provider='yaencontre'; canonical='https://www.yaencontre.com'+path;
+  } else if (domain('push.search.is24.de') &&
+      (match=path.match(/^\/email\/expose\/(\d{6,})\/?$/i))) {
+    provider='immoscout24'; canonical='https://www.immobilienscout24.de/expose/'+match[1];
+  } else if (domain('immobilienscout24.de') &&
+      (match=path.match(/^\/expose\/(\d{6,})\/?$/i))) {
+    provider='immoscout24'; canonical='https://www.immobilienscout24.de/expose/'+match[1];
   } else return null;
   return {id:provider+':'+match[1],provider,url:canonical};
 }
@@ -99,8 +105,13 @@ function wa2ResolveMilanunciosTrackedLinks(html) {
     const match=attrs.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
     const href=wa2CleanUrl(match&&(match[1]||match[2]||match[3]));
     if(!/^https:\/\/sgt\.milanuncios\.com\/ls\/click\?/i.test(href))return whole;
-    if(!/<img\b/i.test(body)||!/images-re\.milanuncios\.com\/images\/ads\//i.test(body))
-      return whole;
+    // Milanuncios switched the card to Braze-hosted images. Its separate
+    // "Ver más fotos" CTA is a listing-specific link; general links such as
+    // "Ver anuncios" or "Modificar" remain excluded.
+    const oldCard=/<img\b/i.test(body)&&/images-re\.milanuncios\.com\/images\/ads\//i.test(body);
+    const photoCta=/\bver(?:&nbsp;|&#160;|\s)*m(?:á|&aacute;|a)(?:s)(?:&nbsp;|&#160;|\s)*fotos\b/i
+      .test(body.replace(/<[^>]*>/g,' '));
+    if(!oldCard&&!photoCta)return whole;
     if(!cache.has(href)){
       if(cache.size>=8)return whole;
       let target='',current=href;
