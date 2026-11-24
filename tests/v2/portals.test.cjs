@@ -88,3 +88,40 @@ test('Milanuncios tracking card resolves directly without fetching its photo',()
   assert.equal(listings.length,1);
   assert.equal(listings[0].id,'milanuncios:625396547');
 });
+
+test('ImmoScout24 search alert links are normalized and deduplicated by expose ID',()=>{
+  const c=load();
+  const first='https://push.search.is24.de/email/expose/172971242?PID=126927387&savedSearchId=202597678';
+  const same='https://www.immobilienscout24.de/expose/172971242';
+  const second='https://push.search.is24.de/email/expose/172980371?PID=126927387';
+  c.links=[first,same,second];
+  const result=vm.runInContext('wa2ExtractListings("",links.join(" "))',c);
+  assert.equal(result.length,2);
+  assert.equal(result[0].id,'immoscout24:172971242');
+  assert.equal(result[0].url,same);
+  assert.equal(result[1].id,'immoscout24:172980371');
+  assert.equal(vm.runInContext('wa2GetPortalListing("https://push.search.is24.de/email/Suche/controller/executeSavedSearch/radius?x=1")',c),null);
+});
+
+test('Milanuncios Braze card photo CTA can resolve, never generic navigation',()=>{
+  const c=load();
+  let calls=0;
+  c.UrlFetchApp={fetch:()=>{
+    calls++;
+    return {getResponseCode:()=>302,getAllHeaders:()=>({
+      Location:'https://www.milanuncios.com/ads/malaga-capital-626125129.htm'
+    })};
+  }};
+  const card='https://sgt.milanuncios.com/ls/click?t=card';
+  const nav='https://sgt.milanuncios.com/ls/click?t=nav';
+  const html='<a href="'+nav+'">Ver anuncios</a><a href="'+card+'">Ver&nbsp;más&nbsp;fotos</a>';
+  c.html=html;
+  const resolved=vm.runInContext('wa2ResolveMilanunciosTrackedLinks(html)',c);
+  assert.equal(calls,1);
+  assert.match(resolved,/https:\/\/www\.milanuncios\.com\/ads\/malaga-capital-626125129\.htm/);
+  assert.match(resolved,/href="https:\/\/sgt\.milanuncios\.com\/ls\/click\?t=nav"/);
+  c.resolved=resolved;
+  const listings=vm.runInContext('wa2ExtractListings(resolved,"")',c);
+  assert.equal(listings.length,1);
+  assert.equal(listings[0].id,'milanuncios:626125129');
+});
